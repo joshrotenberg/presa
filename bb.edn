@@ -1,0 +1,7 @@
+{:min-bb-version "1.13.225"
+ :paths ["src" "test"]
+ :tasks
+ {test {:doc "Run the tests under Babashka."
+        :task (apply (requiring-resolve 'presa.test-runner/-main) *command-line-args*)}
+  jvm-test {:doc "Run the same tests on the JVM."
+            :task (shell "clojure -M:test")}}}
