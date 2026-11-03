@@ -5,6 +5,7 @@
             [presa.client-test]
             [presa.content-test]
             [presa.example.hello-test]
+            [presa.input-test]
             [presa.jsonrpc-test]
             [presa.protocol-test]
             [presa.schema-test]
@@ -21,6 +22,7 @@
     presa.schema-test
     presa.transport.stdio-test
     presa.client-test
+    presa.input-test
     presa.example.hello-test])
 
 (defn -main [& _]

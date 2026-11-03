@@ -15,8 +15,10 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [presa.content :as content]
+            [presa.input :as input]
             [presa.jsonrpc :as rpc]
             [presa.protocol :as protocol]
+            [presa.request-state :as request-state]
             [presa.schema :as schema]
             [presa.uri-template :as uri-template])
   (:import (java.util Base64)))
@@ -71,6 +73,33 @@
     (map? v) (structured v)
     (nil? v) {"content" [] "isError" false}
     :else (text (json-text v))))
+
+(defn input-required
+  "What a tool, resource or prompt handler returns to ask the client for
+  input before it can finish. requests maps ids of the server's choosing to
+  input requests (see presa.input). state is an optional JSON value the
+  server gets back with the answers, signed so the client cannot change it.
+
+  The handler is called again with the answers: (:input-responses context)
+  maps the same ids to the client's results, and (:state context) holds
+  state. Answers can be partial; ask again for what is missing. On
+  2026-07-28 this becomes an input_required result the client answers on a
+  new request; on an initialize-era session presa sends the requests to the
+  client itself and calls the handler again on the same request."
+  ([requests] (input-required requests nil))
+  ([requests state]
+   (when-not (and (map? requests) (every? string? (keys requests))
+                  (every? #(input/request-methods (get % "method")) (vals requests)))
+     (throw (ex-info "input-required takes a map of string ids to input requests"
+                     {:kind :invalid-input :requests requests})))
+   {::input-required {:requests requests :state state}}))
+
+(defn input-response
+  "The client's answer to the input request with id, or nil."
+  [context id]
+  (get (:input-responses context) id))
+
+(defn- input-required? [v] (and (map? v) (contains? v ::input-required)))
 
 ;; Definitions
 
@@ -172,6 +201,10 @@
       results against :output-schema, with presa.schema (default true).
       Invalid arguments are an isError result the model can read; invalid
       output is an internal error.
+  - :state-secret  the key that signs requestState tokens, a string or bytes
+      of at least 32 bytes (default: random for this server map, so tokens
+      do not survive a restart or reach another instance)
+  - :state-ttl-ms  how long a requestState token stays valid (default 300000)
   - :logging  true to advertise the logging capability, so `log!` sends
       messages to clients that ask for them
   - :log-level  the level an initialize-era session logs at until the client
@@ -183,8 +216,8 @@
   a map {\"values\" [...] \"total\" n \"hasMore\" b}. At most 100 values are
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
-           versions page-size cache logging log-level validate?]
-    :or {versions [protocol/latest-version] log-level "info" validate? true}}]
+           versions page-size cache logging log-level validate? state-secret state-ttl-ms]
+    :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000}}]
   (when-not (and (string? name) (string? version))
     (throw (ex-info "A server needs string :name and :version" {:kind :invalid-input})))
   (when-let [unknown (seq (remove protocol/known-version? versions))]
@@ -216,6 +249,10 @@
      :page-size page-size
      :logging (boolean logging)
      :validate? (boolean validate?)
+     :state-secret (if state-secret
+                     (request-state/secret-bytes state-secret)
+                     (request-state/random-secret))
+     :state-ttl-ms state-ttl-ms
      :log-level log-level
      :cache {:ttl-ms (or (:ttl-ms cache) 0) :scope (or (:scope cache) "private")}
      ;; newest first, as presa.protocol/versions orders them
@@ -241,16 +278,46 @@
   #{"server/discover" "tools/list" "resources/list" "resources/templates/list"
     "resources/read" "prompts/list"})
 
+(def ^:private input-methods
+  "The methods that may answer input_required."
+  #{"tools/call" "resources/read" "prompts/get"})
+
+(defn- now-ms [] (System/currentTimeMillis))
+
+(defn- input-required-result
+  "An input_required result for a 2026-07-28 request, after checking that
+  the client declared what the requests need."
+  [srv context method params {:keys [requests state]}]
+  (when-not (input-methods method)
+    (throw (error :internal-error "Input-required result is not permitted for this operation")))
+  (when (and (empty? requests) (nil? state))
+    (throw (error :internal-error "Invalid input-required result")))
+  (when-let [missing (input/missing-capabilities requests (:client-capabilities context))]
+    (throw (error :missing-client-capability "Missing required client capability"
+                  {"requiredCapabilities" missing})))
+  (cond-> {"resultType" "input_required"}
+    (seq requests) (assoc "inputRequests" requests)
+    (some? state) (assoc "requestState"
+                         (request-state/sign (:state-secret srv) method params state
+                                             (:state-ttl-ms srv) (now-ms)))))
+
 (defn- shape
   "A result as the revision of context sends it."
-  [srv context method result]
-  (if (protocol/stateless? (:version context))
+  [srv context method params result]
+  (cond
+    (not (protocol/stateless? (:version context)))
+    result
+
+    (input-required? result)
+    (-> (input-required-result srv context method params (::input-required result))
+        (assoc "_meta" {(:server-info protocol/meta-keys) (:info srv)}))
+
+    :else
     (cond-> (-> result
                 (assoc "resultType" "complete")
                 (update "_meta" (fnil assoc {}) (:server-info protocol/meta-keys) (:info srv)))
       (cached-methods method) (assoc "ttlMs" (get-in srv [:cache :ttl-ms])
-                                     "cacheScope" (get-in srv [:cache :scope])))
-    result))
+                                     "cacheScope" (get-in srv [:cache :scope])))))
 
 ;; Pagination
 
@@ -346,6 +413,33 @@
       (throw (error :invalid-params (str method " requires a string " k))))
     v))
 
+
+(declare client-request!)
+
+(def ^:private max-input-rounds 8)
+
+(defn- run-handler
+  "Call handler, a function of the context. On 2026-07-28 an input_required
+  value is returned as is, for `shape` to send; on an initialize-era
+  session presa asks the client and calls handler again."
+  [context handler]
+  (if (protocol/stateless? (:version context))
+    (handler context)
+    (loop [context (assoc context :input-responses {}) round 1]
+      (let [v (handler context)]
+        (if-not (input-required? v)
+          v
+          (let [{:keys [requests state]} (::input-required v)]
+            (when (> round max-input-rounds)
+              (throw (error :internal-error (str "The handler asked for input more than " max-input-rounds " times"))))
+            (recur (assoc context
+                          :state state
+                          :input-responses (into {}
+                                                 (map (fn [[id {:strs [method params]}]]
+                                                        [id (client-request! context method params)]))
+                                                 requests))
+                   (inc round))))))))
+
 (defn- tools-list [srv params _context]
   (paged srv "tools/list" params "tools" (map (comp wire-tool (:tools srv)) (:tool-order srv))))
 
@@ -357,13 +451,15 @@
     (if-let [invalid (and (:validate? srv) (:input-schema tool)
                           (schema/validate arguments (:input-schema tool)))]
       (tool-error (str "Invalid arguments " (schema/describe invalid)))
-      (let [result (try
-                     (tool-result ((:handler tool) arguments context))
-                     (catch Exception e
-                       (if (:presa/error (ex-data e))
-                         (throw e)
-                         (tool-error (or (ex-message e) (str (class e)))))))]
-        (when (and (:validate? srv) (:output-schema tool) (not (get result "isError")))
+      (let [v (try
+                (run-handler context #((:handler tool) arguments %))
+                (catch Exception e
+                  (if (:presa/error (ex-data e))
+                    (throw e)
+                    (tool-error (or (ex-message e) (str (class e)))))))
+            result (if (input-required? v) v (tool-result v))]
+        (when (and (:validate? srv) (:output-schema tool) (not (input-required? result))
+                   (not (get result "isError")))
           (if-not (contains? result "structuredContent")
             (throw (error :internal-error "Tool omitted structured output required by its output schema"))
             (when-let [invalid (schema/validate (get result "structuredContent") (:output-schema tool))]
@@ -395,12 +491,15 @@
     (when-not (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" uri)
       (throw (error :invalid-params "resources/read uri must be an absolute URI")))
     (if-let [resource (get-in srv [:resources uri])]
-      {"contents" (contents uri (:mime-type resource) ((:handler resource) context))}
+      (let [v (run-handler context (:handler resource))]
+        (if (input-required? v) v {"contents" (contents uri (:mime-type resource) v)}))
       (if-let [[template variables] (some (fn [t] (when-let [vs ((::match t) uri)] [t vs]))
                                           (:templates srv))]
-        (let [v ((:handler template) variables (assoc context :uri uri))]
-          (when (nil? v) (throw (not-found uri)))
-          {"contents" (contents uri (:mime-type template) v)})
+        (let [v (run-handler (assoc context :uri uri) #((:handler template) variables %))]
+          (cond
+            (nil? v) (throw (not-found uri))
+            (input-required? v) v
+            :else {"contents" (contents uri (:mime-type template) v)}))
         (throw (not-found uri))))))
 
 (defn- prompts-list [srv params _context]
@@ -423,12 +522,14 @@
                                   :when (and required (not (contains? arguments arg)))]
                               arg))]
       (throw (error :invalid-params "Missing required prompt arguments" {"missing" (vec missing)})))
-    (let [v ((:handler prompt) arguments context)
-          result (if (and (map? v) (contains? v "messages"))
+    (let [v (run-handler context #((:handler prompt) arguments %))
+          result (cond
+                   (input-required? v) v
+                   (and (map? v) (contains? v "messages"))
                    (update v "messages" #(mapv message %))
-                   {"messages" (mapv message (if (string? v) [v] v))})]
+                   :else {"messages" (mapv message (if (string? v) [v] v))})]
       (cond-> result
-        (and (:description prompt) (not (contains? result "description")))
+        (and (:description prompt) (not (input-required? result)) (not (contains? result "description")))
         (assoc "description" (:description prompt))))))
 
 (defn- completion-result [v]
@@ -461,7 +562,7 @@
 
 (defn- ping [_ _ _] {})
 
-(def ^:private methods
+(def ^:private method-table
   "Each method: its function, the capability the server must have, and
   whether the initialize-era revisions serve it."
   {"server/discover" {:f server-discover :legacy? false}
@@ -477,7 +578,7 @@
    "completion/complete" {:f completion-complete :capability "completions" :legacy? true}})
 
 (defn- method-fn [srv method legacy?]
-  (let [{:keys [f capability] :as m} (get methods method)]
+  (let [{:keys [f capability] :as m} (get method-table method)]
     (if (and m
              (if legacy? (:legacy? m) (:stateless? m true))
              (or (nil? capability) (contains? (capabilities srv) capability)))
@@ -537,6 +638,27 @@
      :log-level level
      :meta meta}))
 
+(defn- input-admission
+  "The :input-responses and :state of a 2026-07-28 retry, checked."
+  [srv method params]
+  (let [responses (get params "inputResponses")
+        token (get params "requestState")]
+    (when (contains? params "inputResponses")
+      (when-not (map? responses)
+        (throw (error :invalid-params "inputResponses must be an object")))
+      (when-not (and (every? string? (keys responses)) (every? map? (vals responses)))
+        (throw (error :invalid-params "inputResponses must map string IDs to bare result objects"))))
+    (when (and (contains? params "requestState") (not (string? token)))
+      (throw (error :invalid-params "requestState must be a string")))
+    (when (and (or (contains? params "inputResponses") (contains? params "requestState"))
+               (not (input-methods method)))
+      (throw (error :invalid-params (str method " does not take inputResponses or requestState"))))
+    {:input-responses (or responses {})
+     :state (when (string? token)
+              (try (request-state/verify (:state-secret srv) method params token (now-ms))
+                   (catch clojure.lang.ExceptionInfo _
+                     (throw (error :invalid-params "Invalid or expired request state")))))}))
+
 (defn- negotiate
   "The version to answer initialize with: the one the client asked for when
   the server serves it, else the newest initialize-era one it serves."
@@ -583,8 +705,9 @@
     (cond
       (contains? meta version-key)
       (let [context (merge (stateless-context srv meta) extra {:request-id id})
-            f (method-fn srv method false)]
-        [session (fn [] (shape srv context method (f srv params context)))])
+            f (method-fn srv method false)
+            context (merge context (input-admission srv method params))]
+        [session (fn [] (shape srv context method params (f srv params context)))])
 
       (= "initialize" method)
       (initialize srv params)
@@ -601,7 +724,9 @@
         [(assoc session :log-level level) (constantly {})])
 
       (:version session)
-      (let [context (merge session extra {:meta meta :request-id id})
+      (let [_ (when (or (contains? params "inputResponses") (contains? params "requestState"))
+                (throw (error :invalid-params "Multi round-trip inputs are not supported on this revision")))
+            context (merge session extra {:meta meta :request-id id})
             f (method-fn srv method true)]
         [session (fn [] (f srv params context))])
 

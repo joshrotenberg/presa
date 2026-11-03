@@ -146,8 +146,25 @@
       (finally
         (when token (swap! (:progress client) dissoc token))))))
 
+(def ^:private max-input-rounds 10)
+
+(defn- answer-inputs
+  "Answers to a 2026-07-28 input_required result's inputRequests, from the
+  client's :handlers."
+  [client requests]
+  (into {}
+        (map (fn [[id {:strs [method params]}]]
+               (let [f (or (get-in client [:opts :handlers method])
+                           (throw (ex-info (str "The server asked for " method " and the client has no handler for it")
+                                           {:kind :unsupported :method method})))]
+                 [id (f params)])))
+        requests))
+
 (defn request
   "Send a request and return its result map, or throw for a JSON-RPC error.
+  When a 2026-07-28 server answers input_required, the client answers each
+  input request with its :handlers and sends the request again, with the
+  answers and the server's requestState, until the result is complete.
   params is a map with string keys. opts:
 
   - :timeout-ms   how long to wait (default the client's, 60000)
@@ -158,10 +175,23 @@
   ([client method] (request client method nil {}))
   ([client method params] (request client method params {}))
   ([client method params opts]
-   (let [response (send-request client method params (assoc opts :stateless? (stateless? client)))]
-     (if-let [error (get response "error")]
-       (throw (protocol-error error))
-       (get response "result")))))
+   (loop [params params round 1]
+     (let [response (send-request client method params (assoc opts :stateless? (stateless? client)))
+           result (get response "result")]
+       (cond
+         (contains? response "error")
+         (throw (protocol-error (get response "error")))
+
+         (and (map? result) (= "input_required" (get result "resultType")))
+         (do (when (> round max-input-rounds)
+               (throw (ex-info (str method " asked for input more than " max-input-rounds " times")
+                               {:kind :protocol :method method})))
+             (recur (cond-> (assoc (dissoc (or params {}) "requestState" "_meta")
+                                   "inputResponses" (answer-inputs client (get result "inputRequests")))
+                      (contains? result "requestState") (assoc "requestState" (get result "requestState")))
+                    (inc round)))
+
+         :else result)))))
 
 (defn notify
   "Send the server a notification."
@@ -206,6 +236,12 @@
       (notify client "notifications/initialized")
       result)))
 
+(defn- handler-capabilities [handlers]
+  (cond-> {}
+    (contains? handlers "elicitation/create") (assoc "elicitation" {"form" {}})
+    (contains? handlers "sampling/createMessage") (assoc "sampling" {})
+    (contains? handlers "roots/list") (assoc "roots" {})))
+
 (defn connect
   "Open transport and negotiate a revision. Returns a client. Options:
 
@@ -220,12 +256,16 @@
                    `set-log-level`
   - :on-log        (fn [params]) for notifications/message
   - :on-notification  (fn [message]) for every notification
-  - :handlers      {method (fn [params])} answering requests an
-                   initialize-era server sends, such as roots/list"
+  - :handlers      {method (fn [params])} answering what a server asks
+                   for: \"elicitation/create\", \"sampling/createMessage\",
+                   \"roots/list\". They answer input requests in 2026-07-28
+                   input_required results and requests from initialize-era
+                   servers alike. Without :capabilities, the client declares
+                   the capabilities its handlers cover."
   ([transport] (connect transport {}))
   ([transport opts]
    (let [opts (merge {:client-info {"name" "presa" "version" "0.0.0"}
-                      :capabilities {}
+                      :capabilities (handler-capabilities (:handlers opts))
                       :versions protocol/versions}
                      opts)
          client {:opts opts
