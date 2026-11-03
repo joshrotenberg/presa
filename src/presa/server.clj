@@ -232,13 +232,13 @@
 
 (defn- request
   "[session respond] for a request with an id."
-  [srv session {:strs [id method params]}]
+  [srv session {:strs [id method params]} extra]
   (let [params (if (map? params) params {})
         meta (request-meta params)
         version-key (:protocol-version protocol/meta-keys)]
     (cond
       (contains? meta version-key)
-      (let [context (assoc (stateless-context srv meta) :request-id id)
+      (let [context (merge (stateless-context srv meta) extra {:request-id id})
             f (or (get stateless-methods method)
                   (throw (protocol-error :method-not-found (str "Method not found: " method))))]
         [session (fn [] (shape srv context (f srv params context)))])
@@ -250,7 +250,7 @@
       [session (constantly {})]
 
       (:version session)
-      (let [context (assoc session :meta meta :request-id id)
+      (let [context (merge session extra {:meta meta :request-id id})
             f (or (get legacy-methods method)
                   (throw (protocol-error :method-not-found (str "Method not found: " method))))]
         [session (fn [] (f srv params context))])
@@ -262,50 +262,96 @@
       :else
       (throw (protocol-error :invalid-params (str "Missing required " version-key " metadata"))))))
 
+(defn- cancel-target
+  "The request id a notifications/cancelled message names, or nil."
+  [message]
+  (when (= "notifications/cancelled" (get message "method"))
+    (let [id (get-in message ["params" "requestId"])]
+      (when (or (string? id) (integer? id)) id))))
+
 (defn prepare
   "Read one message against session, the connection's state ({} for a new
-  connection). Returns {:session s :respond f}: s is the session for the next
-  message, and f, a function of no arguments, returns the response map, or
-  nil when the message needs none (a notification, or a response from the
-  client). Settling the session is cheap; the work, such as running a tool,
-  happens in f, which never throws.
+  connection). Returns a map:
 
-  A tool handler's context holds :version, :client-info,
-  :client-capabilities, :meta (the request's _meta) and :request-id."
-  [srv session message]
-  (case (rpc/kind message)
-    :request
-    (let [id (get message "id")]
-      (try
-        (let [[session' respond] (request srv session message)]
-          {:session session'
-           :respond (fn []
-                      (try
-                        (rpc/result id (respond))
-                        (catch Exception e
-                          (if (:presa/error (ex-data e))
-                            (error-response id e)
-                            (rpc/error id :internal-error (str "Internal error: " (ex-message e)))))))})
-        (catch Exception e
-          (let [response (if (:presa/error (ex-data e))
-                           (error-response id e)
-                           (rpc/error id :internal-error (str "Internal error: " (ex-message e))))]
-            {:session session :respond (constantly response)}))))
+  - :session  the session for the next message
+  - :respond  a function of no arguments that does the work, such as running
+              a tool, and returns the response map, or nil when the message
+              needs none (a notification, a response from the client, or a
+              request cancelled before it finished). It never throws.
+  - :request-id and :cancel!  for a request: its id, and a function that
+              marks it cancelled, so :respond returns nil and the handler's
+              (:cancelled? context) returns true
+  - :cancel   for notifications/cancelled: the id of the request to cancel
 
-    ;; notifications/initialized, notifications/cancelled and the rest need
-    ;; no answer; responses to requests presa never sent are dropped.
-    (:notification :response :error)
-    {:session session :respond (constantly nil)}
+  Settling the session is cheap and happens here; a transport reads the next
+  message only after prepare returns, and may run :respond on another thread.
 
-    :invalid
-    (let [id (when (map? message) (get message "id"))
-          id (when (or (string? id) (integer? id)) id)]
-      {:session session
-       :respond (constantly (rpc/error id :invalid-request "Invalid JSON-RPC 2.0 message"))})))
+  opts:
+  - :notify  (fn [notification]) sends a notification map to the client
+             while the request runs; without it, notifications are dropped
+
+  A handler's context holds :version, :client-info, :client-capabilities,
+  :meta (the request's _meta), :request-id, :notify and :cancelled?; see
+  `notify!`, `progress!` and `log!`."
+  ([srv session message] (prepare srv session message {}))
+  ([srv session message {:keys [notify]}]
+   (case (rpc/kind message)
+     :request
+     (let [id (get message "id")
+           cancelled (atom false)
+           extra {:notify (or notify (fn [_]))
+                  :cancelled? (fn [] @cancelled)}
+           fail (fn [e]
+                  (if (:presa/error (ex-data e))
+                    (error-response id e)
+                    (rpc/error id :internal-error (str "Internal error: " (ex-message e)))))
+           prepared (try
+                      (let [[session' respond] (request srv session message extra)]
+                        {:session session'
+                         :respond (fn []
+                                    (let [response (try (rpc/result id (respond))
+                                                        (catch Exception e (fail e)))]
+                                      (when-not @cancelled response)))})
+                      (catch Exception e
+                        (let [response (fail e)]
+                          {:session session :respond (constantly response)})))]
+       (assoc prepared :request-id id :cancel! (fn [] (reset! cancelled true))))
+
+     ;; notifications/initialized and the rest need no answer; responses to
+     ;; requests presa never sent are dropped.
+     (:notification :response :error)
+     (cond-> {:session session :respond (constantly nil)}
+       (cancel-target message) (assoc :cancel (cancel-target message)))
+
+     :invalid
+     (let [id (when (map? message) (get message "id"))
+           id (when (or (string? id) (integer? id)) id)]
+       {:session session
+        :respond (constantly (rpc/error id :invalid-request "Invalid JSON-RPC 2.0 message"))}))))
 
 (defn handle
   "Handle one message: [session response], where response is nil when the
   message needs none. See `prepare`."
-  [srv session message]
-  (let [{:keys [session respond]} (prepare srv session message)]
-    [session (respond)]))
+  ([srv session message] (handle srv session message {}))
+  ([srv session message opts]
+   (let [{:keys [session respond]} (prepare srv session message opts)]
+     [session (respond)])))
+
+;; Notifications from handlers
+
+(defn notify!
+  "Send the client a notification while the request of context runs."
+  [context method params]
+  ((:notify context) (rpc/notification method params)))
+
+(defn progress!
+  "Report progress on the request of context, when the client asked for it
+  with a progressToken in _meta. progress is a number that increases with
+  each call; total and message are optional."
+  ([context progress] (progress! context progress {}))
+  ([context progress {:keys [total message]}]
+   (when-let [token (get (:meta context) "progressToken")]
+     (notify! context "notifications/progress"
+              (cond-> {"progressToken" token "progress" progress}
+                total (assoc "total" total)
+                message (assoc "message" message))))))
