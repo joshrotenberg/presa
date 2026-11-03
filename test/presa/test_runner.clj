@@ -11,6 +11,7 @@
             [presa.schema-test]
             [presa.server-surface-test]
             [presa.server-test]
+            [presa.transport.http-test]
             [presa.transport.stdio-test]))
 
 (def namespaces
@@ -21,6 +22,7 @@
     presa.server-surface-test
     presa.schema-test
     presa.transport.stdio-test
+    presa.transport.http-test
     presa.client-test
     presa.input-test
     presa.example.hello-test])
