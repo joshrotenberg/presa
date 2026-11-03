@@ -15,15 +15,15 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 - [x] `server/discover`, per-request `_meta` validation, -32022
 - [x] Initialize-era opt-in (`2025-11-25`, `2025-06-18`)
 - [x] stdio transport, requests run concurrently
-- [ ] Resources, resource templates, `resources/read`, resource not found
-- [ ] Prompts: list and get
-- [ ] `completion/complete`
-- [ ] Pagination with opaque cursors
-- [ ] Caching hints (`ttlMs`, `cacheScope`)
-- [ ] Content helpers: image, audio, resource links, embedded resources
-- [ ] Logging (`notifications/message`, `logLevel`) and progress
+- [x] Resources, resource templates, `resources/read`, resource not found
+- [x] Prompts: list and get
+- [x] `completion/complete`
+- [x] Pagination with opaque cursors
+- [x] Caching hints (`ttlMs`, `cacheScope`)
+- [x] Content helpers: image, audio, resource links, embedded resources
+- [x] Logging (`notifications/message`, `logLevel`) and progress
       (`notifications/progress`) from handlers
-- [ ] Cancellation (`notifications/cancelled`)
+- [x] Cancellation (`notifications/cancelled`)
 
 ## 2. Multi round-trip requests
 
@@ -45,12 +45,13 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 
 ## 5. Client
 
-- [ ] In-process, stdio and HTTP connections
-- [ ] Version negotiation: `server/discover`, falling back to `initialize`
-- [ ] Tools, resources, prompts and completion calls, with pagination
+- [x] In-process and stdio connections
+- [ ] HTTP connections
+- [x] Version negotiation: `server/discover`, falling back to `initialize`
+- [x] Tools, resources, prompts and completion calls, with pagination
 - [ ] Answering `input_required` with caller-supplied elicitation, sampling and
       roots functions
-- [ ] Turning a server's tools into functions
+- [x] Turning a server's tools into functions
 - [ ] The runner's client leg
 
 ## 6. Later

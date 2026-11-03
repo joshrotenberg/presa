@@ -26,14 +26,19 @@ presa is pre-release: there is no published version, and the API will change.
 
 ## Layout
 
-| Namespace | Role | Status |
-|---|---|---|
-| `presa.protocol` | spec revisions, `_meta` keys, error codes | done |
-| `presa.jsonrpc` | JSON-RPC 2.0 messages and newline framing | done |
-| `presa.server` | request dispatch, discovery, initialize opt-in, tools | tools only; resources and prompts planned |
-| `presa.transport.stdio` | stdio transport | server side; client side planned |
-| `presa.client` | calling a server, in process, over stdio or over HTTP | planned |
-| `presa.transport.http` | Streamable HTTP over http-kit | planned |
+| Namespace | Role |
+|---|---|
+| `presa.protocol` | spec revisions, `_meta` keys, error codes, log levels |
+| `presa.jsonrpc` | JSON-RPC 2.0 messages and newline framing |
+| `presa.server` | a server as data; dispatch for discovery, initialize, tools, resources, prompts, completion; pagination, caching hints, logging and progress from handlers |
+| `presa.content` | content blocks: text, image, audio, embedded resources, resource links |
+| `presa.uri-template` | `{var}` and `{+var}` URI templates for resource templates |
+| `presa.connection` | one client's connection to a server: session, concurrency, cancellation |
+| `presa.client` | calling a server: negotiation, requests, timeouts, progress and log callbacks |
+| `presa.transport.stdio` | stdio: serve a server, or start a server subprocess as a client |
+| `presa.transport.http` | Streamable HTTP over http-kit (planned) |
+
+[docs/roadmap.md](docs/roadmap.md) lists what is done and what is next.
 
 ## A tools server over stdio
 
@@ -70,7 +75,29 @@ handler that throws becomes an `isError` result. `stdio/serve!` runs each
 request on its own thread and binds `*out*` to `*err*` in handlers, so
 printing cannot corrupt the protocol stream.
 
-### The example server
+### A client
+
+```clojure
+(require '[presa.client :as client]
+         '[presa.transport.stdio :as stdio])
+
+(def c (client/connect (stdio/command ["bb" "--config" "/path/to/presa/bb.edn"
+                                       "-m" "presa.example.hello"])))
+(client/info c)                                    ; {:version "2026-07-28" ...}
+(client/list-tools c)                              ; every page
+(client/call-tool c "add" {"numbers" [1 2 3]})     ; {"structuredContent" {"sum" 6} ...}
+((get (client/tool-fns c) "echo") {"text" "hi"})
+(client/close c)
+```
+
+`client/in-process` connects to a server map in the same process, which is
+how presa's own tests drive servers. `connect` tries `server/discover`
+first and falls back to `initialize` when the server does not answer as a
+2026-07-28 server. Requests take `:timeout-ms` (a timeout cancels the
+request on the server), `:on-progress` and `:log-level`; `connect` takes
+`:on-log`.
+
+## The example server
 
 [`examples/presa/example/hello.clj`](examples/presa/example/hello.clj) has two
 tools, `echo` and `add`, and serves every revision presa knows. It runs from
