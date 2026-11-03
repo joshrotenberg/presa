@@ -129,3 +129,33 @@
     (let [e (try (client/connect (stdio/command ["bb" "-e" "(System/exit 0)"]) {:probe-timeout-ms 5000})
                  (catch Exception e e))]
       (is (= :closed (:kind (ex-data e)))))))
+
+(deftest requests-from-an-initialize-era-server
+  (let [srv (server/server
+             {:name "t" :version "1" :versions protocol/legacy-versions
+              :tools [{:name "roots"
+                       :handler (fn [_ ctx]
+                                  (let [{:strs [roots]} (server/client-request! ctx "roots/list" {})]
+                                    (mapv #(get % "uri") roots)))}
+                      {:name "ask"
+                       :handler (fn [_ ctx]
+                                  (get-in (server/client-request! ctx "elicitation/create"
+                                                                  {"message" "name?" "requestedSchema" {"type" "object"}})
+                                          ["content" "name"]))}]})
+        c (client/connect (client/in-process srv)
+                          {:capabilities {"roots" {}}
+                           :handlers {"roots/list" (fn [_] {"roots" [{"uri" "file:///work" "name" "work"}]})}})]
+    (try
+      (is (= "[\"file:///work\"]" (client/text (client/call-tool c "roots"))))
+      (testing "a capability the client did not declare is an isError result"
+        (let [r (client/call-tool c "ask")]
+          (is (true? (get r "isError")))
+          (is (= "The client did not declare the elicitation capability" (client/text r)))))
+      (finally (client/close c))))
+  (testing "2026-07-28 has no requests from server to client"
+    (let [srv (server/server {:name "t" :version "1"
+                              :tools [{:name "roots" :handler (fn [_ ctx] (server/client-request! ctx "roots/list" {}))}]})
+          c (client/connect (client/in-process srv))]
+      (try
+        (is (true? (get (client/call-tool c "roots") "isError")))
+        (finally (client/close c))))))

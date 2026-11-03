@@ -601,18 +601,21 @@
   opts:
   - :notify  (fn [notification]) sends a notification map to the client
              while the request runs; without it, notifications are dropped
+  - :request (fn [method params timeout-ms]) sends the client a request and
+             returns its response map; see `client-request!`
 
   A handler's context holds :version, :client-info, :client-capabilities,
   :meta (the request's _meta), :request-id, :log-level, :notify and
   :cancelled?, and for a resource template, :uri; see `notify!`,
   `progress!` and `log!`."
   ([srv session message] (prepare srv session message {}))
-  ([srv session message {:keys [notify]}]
+  ([srv session message {:keys [notify] send-request :request}]
    (case (rpc/kind message)
      :request
      (let [id (get message "id")
            cancelled (atom false)
            extra {:notify (or notify (fn [_]))
+                  :request send-request
                   :cancelled? (fn [] @cancelled)}
            fail (fn [e]
                   (if (:presa/error (ex-data e))
@@ -686,3 +689,39 @@
                       logger (assoc "logger" logger)))
            true)
        false))))
+
+(def ^:private client-request-capabilities
+  {"roots/list" "roots"
+   "sampling/createMessage" "sampling"
+   "elicitation/create" "elicitation"})
+
+(defn client-request!
+  "Send the client a request from the handler of an initialize-era request,
+  and return the result map: roots/list, sampling/createMessage,
+  elicitation/create, or ping. Throws ex-info with :kind :protocol for an
+  error response, :kind :unsupported when the client did not declare the
+  capability the method needs, or the revision has no requests from server
+  to client (2026-07-28 asks for input with input_required results instead),
+  :kind :timeout, or :kind :closed.
+
+  opts: :timeout-ms (default 60000)."
+  ([context method params] (client-request! context method params {}))
+  ([context method params {:keys [timeout-ms] :or {timeout-ms 60000}}]
+   (when (or (protocol/stateless? (:version context)) (nil? (:request context)))
+     (throw (ex-info (str "This connection cannot send " method " to the client")
+                     {:kind :unsupported :method method})))
+   (when-let [capability (get client-request-capabilities method)]
+     (when-not (contains? (:client-capabilities context) capability)
+       (throw (ex-info (str "The client did not declare the " capability " capability")
+                       {:kind :unsupported :method method :capability capability}))))
+   (let [response ((:request context) method params timeout-ms)]
+     (cond
+       (= :presa.connection/closed response)
+       (throw (ex-info "The connection closed before the client answered" {:kind :closed :method method}))
+
+       (contains? response "error")
+       (let [{:strs [code message data]} (get response "error")]
+         (throw (ex-info (str "MCP error " code ": " message)
+                         {:kind :protocol :code code :message message :data data})))
+
+       :else (get response "result")))))
