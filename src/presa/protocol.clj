@@ -39,4 +39,15 @@
   {:protocol-version "io.modelcontextprotocol/protocolVersion"
    :client-info "io.modelcontextprotocol/clientInfo"
    :client-capabilities "io.modelcontextprotocol/clientCapabilities"
-   :server-info "io.modelcontextprotocol/serverInfo"})
+   :server-info "io.modelcontextprotocol/serverInfo"
+   :log-level "io.modelcontextprotocol/logLevel"})
+
+(def log-levels
+  "The log levels, least severe first (the RFC 5424 severities)."
+  ["debug" "info" "notice" "warning" "error" "critical" "alert" "emergency"])
+
+(defn log-level-rank
+  "The position of level in log-levels, or nil when it is not a level."
+  [level]
+  (let [i (.indexOf ^java.util.List log-levels level)]
+    (when-not (neg? i) i)))

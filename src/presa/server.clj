@@ -167,14 +167,19 @@
       nextCursor (default: everything on one page)
   - :cache  {:ttl-ms n :scope \"private\" or \"public\"}, the caching hints of
       2026-07-28 list, read and discover results (default 0 and private)
+  - :logging  true to advertise the logging capability, so `log!` sends
+      messages to clients that ask for them
+  - :log-level  the level an initialize-era session logs at until the client
+      sends logging/setLevel (default \"info\"); 2026-07-28 clients choose a
+      level on each request, and get no messages without one
 
   A completion function gets the value typed so far, the other arguments the
   client has filled in, and the context, and returns a sequence of strings or
   a map {\"values\" [...] \"total\" n \"hasMore\" b}. At most 100 values are
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
-           versions page-size cache]
-    :or {versions [protocol/latest-version]}}]
+           versions page-size cache logging log-level]
+    :or {versions [protocol/latest-version] log-level "info"}}]
   (when-not (and (string? name) (string? version))
     (throw (ex-info "A server needs string :name and :version" {:kind :invalid-input})))
   (when-let [unknown (seq (remove protocol/known-version? versions))]
@@ -184,6 +189,8 @@
     (throw (ex-info "A server needs at least one protocol version" {:kind :invalid-input})))
   (when (and page-size (not (pos-int? page-size)))
     (throw (ex-info ":page-size must be a positive integer" {:kind :invalid-input})))
+  (when-not (protocol/log-level-rank log-level)
+    (throw (ex-info (str ":log-level must be one of " protocol/log-levels) {:kind :invalid-input})))
   (when (and (:scope cache) (not (#{"private" "public"} (:scope cache))))
     (throw (ex-info ":cache :scope must be \"private\" or \"public\"" {:kind :invalid-input})))
   (let [[tools tool-order] (index "tool" :name (map tool-def tools))
@@ -202,6 +209,8 @@
      :prompts prompts
      :prompt-order prompt-order
      :page-size page-size
+     :logging (boolean logging)
+     :log-level log-level
      :cache {:ttl-ms (or (:ttl-ms cache) 0) :scope (or (:scope cache) "private")}
      ;; newest first, as presa.protocol/versions orders them
      :versions (filterv (set versions) protocol/versions)}))
@@ -217,7 +226,8 @@
     (seq (:tools srv)) (assoc "tools" {})
     (or (seq (:resources srv)) (seq (:templates srv))) (assoc "resources" {})
     (seq (:prompts srv)) (assoc "prompts" {})
-    (completions? srv) (assoc "completions" {})))
+    (completions? srv) (assoc "completions" {})
+    (:logging srv) (assoc "logging" {})))
 
 ;; Shaping results by revision
 
@@ -474,6 +484,8 @@
     {:version version
      :client-info (get meta client-info)
      :client-capabilities (get meta client-capabilities)
+     :log-level (let [level (get meta (:log-level protocol/meta-keys))]
+                  (when (protocol/log-level-rank level) level))
      :meta meta}))
 
 (defn- negotiate
@@ -498,7 +510,8 @@
       (throw (error :invalid-params
                     "initialize requires protocolVersion, capabilities and clientInfo")))
     (let [version (negotiate srv requested)]
-      [{:version version :client-info client-info :client-capabilities capabilities}
+      [{:version version :client-info client-info :client-capabilities capabilities
+        :log-level (:log-level srv)}
        (fn [] (initialize-result srv version))])))
 
 ;; Dispatch
@@ -510,7 +523,8 @@
 (defn- request
   "[session respond] for a request with an id."
   [srv session {:strs [id method params]} extra]
-  (let [params (if (map? params) params {})
+  (let [extra (assoc extra ::logging (:logging srv))
+        params (if (map? params) params {})
         meta (request-meta params)
         version-key (:protocol-version protocol/meta-keys)]
     (cond
@@ -524,6 +538,14 @@
 
       (= "ping" method)
       [session (constantly {})]
+
+      (and (:version session) (= "logging/setLevel" method))
+      (let [level (get params "level")]
+        (when-not (:logging srv)
+          (throw (error :method-not-found (str "Method not found: " method))))
+        (when-not (protocol/log-level-rank level)
+          (throw (error :invalid-params (str "level must be one of " (str/join ", " protocol/log-levels)))))
+        [(assoc session :log-level level) (constantly {})])
 
       (:version session)
       (let [context (merge session extra {:meta meta :request-id id})
@@ -566,8 +588,9 @@
              while the request runs; without it, notifications are dropped
 
   A handler's context holds :version, :client-info, :client-capabilities,
-  :meta (the request's _meta), :request-id, :notify and :cancelled?, and for
-  a resource template, :uri; see `notify!` and `progress!`."
+  :meta (the request's _meta), :request-id, :log-level, :notify and
+  :cancelled?, and for a resource template, :uri; see `notify!`,
+  `progress!` and `log!`."
   ([srv session message] (prepare srv session message {}))
   ([srv session message {:keys [notify]}]
    (case (rpc/kind message)
@@ -630,3 +653,21 @@
               (cond-> {"progressToken" token "progress" progress}
                 total (assoc "total" total)
                 message (assoc "message" message))))))
+
+(defn log!
+  "Send the client a log message (notifications/message) from the request of
+  context, when the server has :logging and level is at or above the level
+  the client asked for. level is a string from presa.protocol/log-levels;
+  data is any JSON value; logger optionally names the source. Returns true
+  when the message was sent."
+  ([context level data] (log! context level data nil))
+  ([context level data logger]
+   (let [rank (or (protocol/log-level-rank level)
+                  (throw (ex-info (str "Unknown log level " level) {:kind :invalid-input :level level})))
+         wanted (some-> (:log-level context) protocol/log-level-rank)]
+     (if (and (::logging context) wanted (>= rank wanted))
+       (do (notify! context "notifications/message"
+                    (cond-> {"level" level "data" data}
+                      logger (assoc "logger" logger)))
+           true)
+       false))))

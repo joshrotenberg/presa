@@ -193,3 +193,47 @@
     (is (= :invalid-input (:kind (ex-data (try (server/server (merge {:name "t" :version "1"} opts))
                                                (catch Exception e e)))))
         (pr-str opts))))
+
+(deftest logging
+  (let [sent (atom [])
+        logger (server/server {:name "t" :version "1" :logging true :versions protocol/versions
+                               :tools [{:name "work"
+                                        :handler (fn [_ ctx]
+                                                   (server/log! ctx "debug" "detail")
+                                                   (server/log! ctx "warning" {"rows" 3} "importer")
+                                                   "done")}]})
+        run (fn [s session message]
+              (reset! sent [])
+              (let [[session' response] (server/handle s session message {:notify #(swap! sent conj %)})]
+                [session' response @sent]))
+        call (fn [meta] (rpc/request 1 "tools/call" {"name" "work" "_meta" meta}))]
+    (testing "the capability is advertised"
+      (is (= {"tools" {} "logging" {}}
+             (get-in (second (run logger {} (rpc/request 1 "server/discover" {"_meta" meta-2026}))) ["result" "capabilities"]))))
+    (testing "2026-07-28: no level, no messages"
+      (is (= [] (nth (run logger {} (call meta-2026)) 2))))
+    (testing "2026-07-28: messages at or above the request's level"
+      (is (= [{"jsonrpc" "2.0" "method" "notifications/message"
+               "params" {"level" "warning" "data" {"rows" 3} "logger" "importer"}}]
+             (nth (run logger {} (call (assoc meta-2026 "io.modelcontextprotocol/logLevel" "info"))) 2)))
+      (is (= 2 (count (nth (run logger {} (call (assoc meta-2026 "io.modelcontextprotocol/logLevel" "debug"))) 2)))))
+    (testing "initialize-era: the server's level until logging/setLevel"
+      (let [[session] (run logger {} (rpc/request 0 "initialize" {"protocolVersion" "2025-06-18" "capabilities" {}
+                                                                  "clientInfo" {"name" "c" "version" "0"}}))
+            plain (rpc/request 1 "tools/call" {"name" "work"})]
+        (is (= ["warning"] (map #(get-in % ["params" "level"]) (nth (run logger session plain) 2))))
+        (let [[session' response] (run logger session (rpc/request 2 "logging/setLevel" {"level" "debug"}))]
+          (is (= {} (get response "result")))
+          (is (= ["debug" "warning"] (map #(get-in % ["params" "level"]) (nth (run logger session' plain) 2)))))
+        (is (= -32602 (get-in (second (run logger session (rpc/request 2 "logging/setLevel" {"level" "loud"})))
+                              ["error" "code"])))))
+    (testing "without :logging, log! sends nothing and setLevel is not found"
+      (let [quiet (server/server {:name "t" :version "1" :versions protocol/versions
+                                  :tools [{:name "work" :handler (fn [_ ctx] (str (server/log! ctx "error" "x")))}]})
+            [_ response msgs] (run quiet {} (call (assoc meta-2026 "io.modelcontextprotocol/logLevel" "debug")))]
+        (is (= [] msgs))
+        (is (= "false" (get-in response ["result" "content" 0 "text"])))
+        (let [[session] (run quiet {} (rpc/request 0 "initialize" {"protocolVersion" "2025-06-18" "capabilities" {}
+                                                                   "clientInfo" {"name" "c" "version" "0"}}))]
+          (is (= -32601 (get-in (second (run quiet session (rpc/request 2 "logging/setLevel" {"level" "debug"})))
+                                ["error" "code"]))))))))
