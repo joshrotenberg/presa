@@ -2,16 +2,20 @@
   "Runs every test namespace and exits with a failing status when any test
   fails, under Babashka (bb test) and on the JVM (clojure -M:test)."
   (:require [clojure.test :as test]
+            [presa.content-test]
             [presa.example.hello-test]
             [presa.jsonrpc-test]
             [presa.protocol-test]
+            [presa.server-surface-test]
             [presa.server-test]
             [presa.transport.stdio-test]))
 
 (def namespaces
   '[presa.protocol-test
     presa.jsonrpc-test
+    presa.content-test
     presa.server-test
+    presa.server-surface-test
     presa.transport.stdio-test
     presa.example.hello-test])
 
