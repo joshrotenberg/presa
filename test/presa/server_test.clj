@@ -79,8 +79,9 @@
       (is (= [] (get (call "nothing" {}) "content")))
       (is (= {"version" "2026-07-28" "client" "test" "id" 2}
              (get (call "context" {}) "structuredContent")))))
-  (testing "ping"
-    (is (= "complete" (get-in (respond stateless (req 3 "ping")) ["result" "resultType"])))))
+  (testing "2026-07-28 removed ping, initialize and logging/setLevel"
+    (doseq [method ["ping" "initialize" "logging/setLevel"]]
+      (is (= -32601 (get-in (respond stateless (req 3 method)) ["error" "code"])) method))))
 
 (deftest stateless-errors
   (let [code (fn [response] (get-in response ["error" "code"]))]
@@ -97,6 +98,23 @@
       (let [response (respond stateless (rpc/request 1 "tools/list" {"_meta" (assoc meta-2026 "io.modelcontextprotocol/protocolVersion" "2025-06-18")}))]
         (is (= -32022 (code response)))
         (is (= {"requested" "2025-06-18" "supported" ["2026-07-28"]} (get-in response ["error" "data"])))))
+    (testing "malformed requests"
+      (let [err (fn [message] (get (respond stateless message) "error"))]
+        (is (= {"code" -32602 "message" "Request params must be an object"}
+               (err {"jsonrpc" "2.0" "id" 1 "method" "tools/list" "params" [1]})))
+        (is (= {"code" -32602 "message" "_meta must be an object"}
+               (err (rpc/request 1 "tools/list" {"_meta" "x"}))))
+        (is (= {"code" -32602 "message" "_meta contains an invalid key or non-JSON value"}
+               (err (rpc/request 1 "tools/list" {"_meta" (assoc meta-2026 "bad key!" 1)}))))
+        (is (= -32602 (get (err (rpc/request 1 "tools/list" {"_meta" (assoc meta-2026 "progressToken" 1.5)})) "code")))
+        (is (= {"code" -32602 "message" "Invalid MCP request log level"}
+               (err (rpc/request 1 "tools/list" {"_meta" (assoc meta-2026 "io.modelcontextprotocol/logLevel" "loud")}))))
+        (is (= {"code" -32602 "message" "Client info must include string name and version"}
+               (err (rpc/request 1 "tools/list" {"_meta" (assoc meta-2026 "io.modelcontextprotocol/clientInfo" {"name" "x"})}))))
+        (is (= {"code" -32602 "message" "Client capabilities must be an object"}
+               (err (rpc/request 1 "tools/list" {"_meta" (assoc meta-2026 "io.modelcontextprotocol/clientCapabilities" [])}))))
+        (is (= -32600 (get (err (rpc/request (apply str (repeat 300 "x")) "tools/list" {"_meta" meta-2026})) "code")))
+        (is (= nil (get (respond stateless (rpc/request 1 "tools/list" {"_meta" (assoc meta-2026 "claudecode/toolUseId" "t" "progressToken" "p")})) "error")))))
     (testing "missing client capabilities"
       (is (= -32602 (code (respond stateless (rpc/request 1 "tools/list" {"_meta" (dissoc meta-2026 "io.modelcontextprotocol/clientCapabilities")}))))))
     (testing "initialize is not served by default"
@@ -132,8 +150,8 @@
     (is (= "2025-11-25" (get-in (respond both (init "2024-11-05")) ["result" "protocolVersion"]))))
   (testing "a malformed initialize"
     (is (= -32602 (get-in (respond both (rpc/request 0 "initialize" {"protocolVersion" "2025-06-18"})) ["error" "code"]))))
-  (testing "a request before initialize"
-    (is (= -32600 (get-in (respond both (rpc/request 1 "tools/list")) ["error" "code"]))))
+  (testing "a request before initialize, without _meta"
+    (is (= -32602 (get-in (respond both (rpc/request 1 "tools/list")) ["error" "code"]))))
   (testing "ping before initialize"
     (is (= {} (get (respond both (rpc/request 1 "ping")) "result"))))
   (testing "the same server still serves stateless requests"

@@ -74,8 +74,9 @@
     (doseq [uri ["file:///nope" "people://nobody/profile"]]
       (is (= {"code" -32602 "message" "Resource not found" "data" {"uri" uri}}
              (get (call "resources/read" {"uri" uri}) "error")))))
-  (testing "a read without a uri"
-    (is (= -32602 (error-code "resources/read")))))
+  (testing "a read without a uri, or with a relative one"
+    (is (= -32602 (error-code "resources/read")))
+    (is (= -32602 (error-code "resources/read" {"uri" "readme.txt"})))))
 
 (deftest prompts
   (testing "prompts/list"
@@ -94,8 +95,9 @@
       (is (= {"type" "resource" "resource" {"uri" "file:///readme.txt" "mimeType" "text/plain" "text" "read me"}}
              (get (nth messages 2) "content")))))
   (testing "errors"
-    (is (= {"code" -32602 "message" "Missing required argument: name"}
+    (is (= {"code" -32602 "message" "Missing required prompt arguments" "data" {"missing" ["name"]}}
            (get (call "prompts/get" {"name" "greet"}) "error")))
+    (is (= -32602 (error-code "prompts/get" {"name" "greet" "arguments" {"name" 1}})))
     (is (= -32602 (error-code "prompts/get" {"name" "nope"})))))
 
 (deftest completion
@@ -151,8 +153,9 @@
                     acc)))]
     (is (= [["t0" "t1"] ["t2" "t3"] ["t4"]] pages))
     (testing "an invalid cursor"
-      (doseq [cursor ["garbage" "" 5 "cHJlc2ExfHByb21wdHMvbGlzdHwy"]]
-        (is (= {"code" -32602 "message" "Invalid cursor"} (get (list-page cursor) "error")) (pr-str cursor))))))
+      (doseq [cursor ["garbage" "" "cHJlc2ExfHByb21wdHMvbGlzdHwy"]]
+        (is (= {"code" -32602 "message" "Invalid pagination cursor"} (get (list-page cursor) "error")) (pr-str cursor)))
+      (is (= {"code" -32602 "message" "Cursor must be a string"} (get (list-page 5) "error"))))))
 
 (deftest caching-hints
   (testing "2026-07-28 list, read and discover results carry ttlMs and cacheScope"

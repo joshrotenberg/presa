@@ -40,12 +40,11 @@
 
 (deftest framing-errors
   (let [srv (server/server {:name "t" :version "1"})
-        {:keys [responses log]} (run srv ["not json" "" "   " (line (rpc/request 1 "ping" {"_meta" meta-2026}))])]
+        {:keys [responses log]} (run srv ["not json" "" "   " (line (rpc/request 1 "server/discover" {"_meta" meta-2026}))])]
     (testing "a line that is not JSON gets a parse error, and blank lines are skipped"
-      (is (= [{"jsonrpc" "2.0" "id" nil "error" {"code" -32700 "message" "Parse error"}}
-              {"jsonrpc" "2.0" "id" 1 "result" {"resultType" "complete"
-                                                "_meta" {"io.modelcontextprotocol/serverInfo" {"name" "t" "version" "1"}}}}]
-             (sort-by #(some? (get % "id")) responses)))
+      (let [[parse-error discovered] (sort-by #(some? (get % "id")) responses)]
+        (is (= {"jsonrpc" "2.0" "id" nil "error" {"code" -32700 "message" "Parse error"}} parse-error))
+        (is (= ["2026-07-28"] (get-in discovered ["result" "supportedVersions"]))))
       (is (= 1 (count log))))))
 
 (deftest tool-calls-run-concurrently

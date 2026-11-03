@@ -259,8 +259,10 @@
                    (.getBytes (str "presa1|" method "|" offset) "UTF-8")))
 
 (defn- decode-cursor [method cursor]
-  (let [invalid #(throw (error :invalid-params "Invalid cursor"))]
-    (when-not (and (string? cursor) (<= (count cursor) 512)) (invalid))
+  (let [invalid #(throw (error :invalid-params "Invalid pagination cursor"))]
+    (when-not (string? cursor)
+      (throw (error :invalid-params "Cursor must be a string")))
+    (when-not (<= (count cursor) 512) (invalid))
     (let [decoded (try (String. (.decode (Base64/getUrlDecoder) ^String cursor) "UTF-8")
                        (catch Exception _ (invalid)))
           [prefix m offset] (str/split decoded #"\|" 3)
@@ -276,7 +278,7 @@
         size (or (:page-size srv) (count items))
         items (vec items)]
     (when (> offset (count items))
-      (throw (error :invalid-params "Invalid cursor")))
+      (throw (error :invalid-params "Pagination cursor has expired")))
     (let [end (min (count items) (+ offset size))]
       [(subvec items offset end)
        (when (< end (count items)) (encode-cursor method end))])))
@@ -321,9 +323,9 @@
 ;; Methods
 
 (defn- server-discover [srv _params _context]
+  ;; serverInfo travels in the result's _meta, which `shape` adds
   (cond-> {"supportedVersions" (:versions srv)
-           "capabilities" (capabilities srv)
-           "serverInfo" (:info srv)}
+           "capabilities" (capabilities srv)}
     (:instructions srv) (assoc "instructions" (:instructions srv))))
 
 (defn- initialize-result [srv version]
@@ -390,6 +392,8 @@
 
 (defn- resources-read [srv params context]
   (let [uri (required-name params "uri" "resources/read")]
+    (when-not (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" uri)
+      (throw (error :invalid-params "resources/read uri must be an absolute URI")))
     (if-let [resource (get-in srv [:resources uri])]
       {"contents" (contents uri (:mime-type resource) ((:handler resource) context))}
       (if-let [[template variables] (some (fn [t] (when-let [vs ((::match t) uri)] [t vs]))
@@ -413,9 +417,12 @@
         arguments (arguments-map params "arguments" "prompts/get")
         prompt (or (get-in srv [:prompts prompt-name])
                    (throw (error :invalid-params (str "Unknown prompt: " prompt-name))))]
-    (doseq [{arg :name required :required} (:arguments prompt)]
-      (when (and required (not (contains? arguments arg)))
-        (throw (error :invalid-params (str "Missing required argument: " arg)))))
+    (when-not (every? string? (vals arguments))
+      (throw (error :invalid-params "prompts/get arguments must map strings to strings")))
+    (when-let [missing (seq (for [{arg :name required :required} (:arguments prompt)
+                                  :when (and required (not (contains? arguments arg)))]
+                              arg))]
+      (throw (error :invalid-params "Missing required prompt arguments" {"missing" (vec missing)})))
     (let [v ((:handler prompt) arguments context)
           result (if (and (map? v) (contains? v "messages"))
                    (update v "messages" #(mapv message %))
@@ -458,7 +465,8 @@
   "Each method: its function, the capability the server must have, and
   whether the initialize-era revisions serve it."
   {"server/discover" {:f server-discover :legacy? false}
-   "ping" {:f ping :legacy? true}
+   ;; 2026-07-28 removed ping; initialize-era sessions still have it
+   "ping" {:f ping :legacy? true :stateless? false}
    "tools/list" {:f tools-list :capability "tools" :legacy? true}
    "tools/call" {:f tools-call :capability "tools" :legacy? true}
    "resources/list" {:f resources-list :capability "resources" :legacy? true}
@@ -471,36 +479,62 @@
 (defn- method-fn [srv method legacy?]
   (let [{:keys [f capability] :as m} (get methods method)]
     (if (and m
-             (or (not legacy?) (:legacy? m))
+             (if legacy? (:legacy? m) (:stateless? m true))
              (or (nil? capability) (contains? (capabilities srv) capability)))
       f
       (throw (error :method-not-found (str "Method not found: " method))))))
 
 ;; Resolving a request's revision
 
+(def ^:private meta-key
+  "The syntax of a _meta key: an optional dotted prefix ending in /, then a
+  name."
+  #"^(?:(?:[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?)(?:\.(?:[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?))*/)?(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)?$")
+
+(defn- bounded-id?
+  "A string of at most 256 bytes or an int64 integer: what request ids and
+  progress tokens may be."
+  [v]
+  (or (and (string? v) (<= (count (.getBytes ^String v "UTF-8")) 256))
+      (and (integer? v) (<= Long/MIN_VALUE v Long/MAX_VALUE))))
+
 (defn- request-meta [params]
-  (let [m (get params "_meta")]
-    (if (map? m) m {})))
+  (let [m (get params "_meta" {})]
+    (when-not (map? m)
+      (throw (error :invalid-params "_meta must be an object")))
+    m))
 
 (defn- stateless-context
   "The context of a request that carries its version in _meta, or a protocol
   error."
   [srv meta]
-  (let [{:keys [protocol-version client-info client-capabilities]} protocol/meta-keys
+  (let [{:keys [protocol-version client-info client-capabilities log-level]} protocol/meta-keys
         version (get meta protocol-version)
-        supported (stateless-versions srv)]
+        supported (stateless-versions srv)
+        level (get meta log-level)
+        info (get meta client-info)]
+    (when-not (every? #(and (string? %) (re-matches meta-key %)) (keys meta))
+      (throw (error :invalid-params "_meta contains an invalid key or non-JSON value")))
+    (when (and (contains? meta "progressToken") (not (bounded-id? (get meta "progressToken"))))
+      (throw (error :invalid-params "progressToken must be a string of at most 256 bytes or an int64 integer")))
+    (when (and (contains? meta log-level) (not (protocol/log-level-rank level)))
+      (throw (error :invalid-params "Invalid MCP request log level")))
     (when-not (string? version)
       (throw (error :invalid-params (str protocol-version " must be a string"))))
     (when-not (some #{version} supported)
       (throw (error :unsupported-protocol-version "Unsupported protocol version"
                     {"requested" version "supported" (:versions srv)})))
+    (when (and (contains? meta client-info)
+               (not (and (map? info) (string? (get info "name")) (string? (get info "version")))))
+      (throw (error :invalid-params "Client info must include string name and version")))
+    (when-not (contains? meta client-capabilities)
+      (throw (error :invalid-params "Missing required client capabilities metadata")))
     (when-not (map? (get meta client-capabilities))
-      (throw (error :invalid-params (str "Missing required " client-capabilities " metadata"))))
+      (throw (error :invalid-params "Client capabilities must be an object")))
     {:version version
-     :client-info (get meta client-info)
+     :client-info info
      :client-capabilities (get meta client-capabilities)
-     :log-level (let [level (get meta (:log-level protocol/meta-keys))]
-                  (when (protocol/log-level-rank level) level))
+     :log-level level
      :meta meta}))
 
 (defn- negotiate
@@ -537,9 +571,13 @@
 
 (defn- request
   "[session respond] for a request with an id."
-  [srv session {:strs [id method params]} extra]
+  [srv session {:strs [id method params] :as message} extra]
+  (when-not (bounded-id? id)
+    (throw (error :invalid-request "Request id must be a string of at most 256 bytes or an int64 integer")))
+  (when (and (contains? message "params") (not (map? params)))
+    (throw (error :invalid-params "Request params must be an object")))
   (let [extra (assoc extra ::logging (:logging srv))
-        params (if (map? params) params {})
+        params (or params {})
         meta (request-meta params)
         version-key (:protocol-version protocol/meta-keys)]
     (cond
@@ -551,7 +589,7 @@
       (= "initialize" method)
       (initialize srv params)
 
-      (= "ping" method)
+      (and (= "ping" method) (seq (legacy-versions srv)))
       [session (constantly {})]
 
       (and (:version session) (= "logging/setLevel" method))
@@ -566,10 +604,6 @@
       (let [context (merge session extra {:meta meta :request-id id})
             f (method-fn srv method true)]
         [session (fn [] (f srv params context))])
-
-      (seq (legacy-versions srv))
-      (throw (error :invalid-request
-                    (str "Request before initialize, and without " version-key " metadata")))
 
       :else
       (throw (error :invalid-params (str "Missing required " version-key " metadata"))))))

@@ -289,7 +289,11 @@
         (recur next-cursor acc (inc pages))
         acc))))
 
-(defn ping [client & [opts]] (request client "ping" {} opts))
+(defn ping
+  "Check that the server answers. 2026-07-28 has no ping, so on that
+  revision this sends server/discover."
+  [client & [opts]]
+  (request client (if (stateless? client) "server/discover" "ping") {} opts))
 
 (defn list-tools
   "Every tool the server lists, following pagination."
