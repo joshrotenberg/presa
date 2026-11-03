@@ -17,6 +17,7 @@
             [presa.content :as content]
             [presa.jsonrpc :as rpc]
             [presa.protocol :as protocol]
+            [presa.schema :as schema]
             [presa.uri-template :as uri-template])
   (:import (java.util Base64)))
 
@@ -167,6 +168,10 @@
       nextCursor (default: everything on one page)
   - :cache  {:ttl-ms n :scope \"private\" or \"public\"}, the caching hints of
       2026-07-28 list, read and discover results (default 0 and private)
+  - :validate?  check tool arguments against :input-schema, and structured
+      results against :output-schema, with presa.schema (default true).
+      Invalid arguments are an isError result the model can read; invalid
+      output is an internal error.
   - :logging  true to advertise the logging capability, so `log!` sends
       messages to clients that ask for them
   - :log-level  the level an initialize-era session logs at until the client
@@ -178,8 +183,8 @@
   a map {\"values\" [...] \"total\" n \"hasMore\" b}. At most 100 values are
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
-           versions page-size cache logging log-level]
-    :or {versions [protocol/latest-version] log-level "info"}}]
+           versions page-size cache logging log-level validate?]
+    :or {versions [protocol/latest-version] log-level "info" validate? true}}]
   (when-not (and (string? name) (string? version))
     (throw (ex-info "A server needs string :name and :version" {:kind :invalid-input})))
   (when-let [unknown (seq (remove protocol/known-version? versions))]
@@ -210,6 +215,7 @@
      :prompt-order prompt-order
      :page-size page-size
      :logging (boolean logging)
+     :validate? (boolean validate?)
      :log-level log-level
      :cache {:ttl-ms (or (:ttl-ms cache) 0) :scope (or (:scope cache) "private")}
      ;; newest first, as presa.protocol/versions orders them
@@ -346,12 +352,21 @@
         arguments (arguments-map params "arguments" "tools/call")
         tool (or (get-in srv [:tools tool-name])
                  (throw (error :invalid-params (str "Unknown tool: " tool-name))))]
-    (try
-      (tool-result ((:handler tool) arguments context))
-      (catch Exception e
-        (if (:presa/error (ex-data e))
-          (throw e)
-          (tool-error (or (ex-message e) (str (class e)))))))))
+    (if-let [invalid (and (:validate? srv) (:input-schema tool)
+                          (schema/validate arguments (:input-schema tool)))]
+      (tool-error (str "Invalid arguments " (schema/describe invalid)))
+      (let [result (try
+                     (tool-result ((:handler tool) arguments context))
+                     (catch Exception e
+                       (if (:presa/error (ex-data e))
+                         (throw e)
+                         (tool-error (or (ex-message e) (str (class e)))))))]
+        (when (and (:validate? srv) (:output-schema tool) (not (get result "isError")))
+          (if-not (contains? result "structuredContent")
+            (throw (error :internal-error "Tool omitted structured output required by its output schema"))
+            (when-let [invalid (schema/validate (get result "structuredContent") (:output-schema tool))]
+              (throw (error :internal-error (str "Tool output failed schema validation " (schema/describe invalid)))))))
+        result))))
 
 (defn- resources-list [srv params _context]
   (paged srv "resources/list" params "resources"

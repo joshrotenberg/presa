@@ -7,6 +7,7 @@
             [presa.example.hello-test]
             [presa.jsonrpc-test]
             [presa.protocol-test]
+            [presa.schema-test]
             [presa.server-surface-test]
             [presa.server-test]
             [presa.transport.stdio-test]))
@@ -17,6 +18,7 @@
     presa.content-test
     presa.server-test
     presa.server-surface-test
+    presa.schema-test
     presa.transport.stdio-test
     presa.client-test
     presa.example.hello-test])
