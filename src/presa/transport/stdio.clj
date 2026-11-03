@@ -13,8 +13,8 @@
   thread and drops its response."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [presa.jsonrpc :as rpc]
-            [presa.server :as server]))
+            [presa.connection :as connection]
+            [presa.jsonrpc :as rpc]))
 
 (defn- stderr-log [& parts]
   (binding [*out* *err*]
@@ -36,50 +36,21 @@
          out (or out (io/writer System/out :encoding "UTF-8"))
          log (or log stderr-log)
          lock (Object.)
-         write! (fn [response]
-                  (when response
-                    (let [line (rpc/write-line response)]
-                      (locking lock
-                        (.write ^java.io.Writer out ^String line)
-                        (.flush ^java.io.Writer out)))))]
-     ;; Requests in flight by id: {:cancel! f :work future}
-     (let [running (atom {})]
-       (loop [session {}]
-         (if-let [line (.readLine in)]
-           (if (str/blank? line)
-             (recur session)
-             (let [message (try (rpc/parse-line line)
-                                (catch Exception e
-                                  (log "parse error: " (ex-message e))
-                                  ::unparsed))]
-               (if (= ::unparsed message)
-                 (do (write! (rpc/error nil :parse-error "Parse error"))
-                     (recur session))
-                 (let [{session' :session :keys [respond request-id cancel! cancel]}
-                       (server/prepare srv session message {:notify write!})]
-                   (when-let [{:keys [cancel! work]} (and (some? cancel) (get @running cancel))]
-                     (cancel!)
-                     (when work (future-cancel work)))
-                   (let [token (Object.)
-                         _ (when (some? request-id)
-                             (swap! running assoc request-id {:cancel! cancel! :token token}))
-                         work (future
-                                (binding [*out* *err*]
-                                  (try
-                                    (write! (respond))
-                                    (catch Throwable e
-                                      (log "failed to write a response: " (ex-message e)))
-                                    (finally
-                                      (when (some? request-id)
-                                        (swap! running (fn [m]
-                                                         (if (= token (get-in m [request-id :token]))
-                                                           (dissoc m request-id)
-                                                           m))))))))]
-                     (when (some? request-id)
-                       (swap! running (fn [m]
-                                        (if (= token (get-in m [request-id :token]))
-                                          (assoc-in m [request-id :work] work)
-                                          m)))))
-                   (recur session')))))
-           (do (run! (fn [{:keys [work]}] (when work (try @work (catch Exception _)))) (vals @running))
-               nil)))))))
+         write! (fn [message]
+                  (let [line (rpc/write-line message)]
+                    (locking lock
+                      (.write ^java.io.Writer out ^String line)
+                      (.flush ^java.io.Writer out))))
+         {:keys [receive! close!]} (connection/open srv {:send write! :log log})]
+     (loop []
+       (if-let [line (.readLine in)]
+         (do (when-not (str/blank? line)
+               (let [message (try (rpc/parse-line line)
+                                  (catch Exception e
+                                    (log "parse error: " (ex-message e))
+                                    ::unparsed))]
+                 (if (= ::unparsed message)
+                   (write! (rpc/error nil :parse-error "Parse error"))
+                   (receive! message))))
+             (recur))
+         (close!))))))
