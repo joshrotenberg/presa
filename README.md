@@ -36,7 +36,10 @@ presa is pre-release: there is no published version, and the API will change.
 | `presa.connection` | one client's connection to a server: session, concurrency, cancellation |
 | `presa.client` | calling a server: negotiation, requests, timeouts, progress and log callbacks |
 | `presa.transport.stdio` | stdio: serve a server, or start a server subprocess as a client |
-| `presa.transport.http` | Streamable HTTP over http-kit (planned) |
+| `presa.input` | input requests (elicitation, sampling, roots) and the capabilities they need |
+| `presa.request-state` | signed `requestState` tokens for multi round-trip requests |
+| `presa.schema` | JSON Schema subset validation for tool arguments and output |
+| `presa.transport.http` | Streamable HTTP: a server over http-kit, a client over `java.net.http` |
 
 [docs/roadmap.md](docs/roadmap.md) lists what is done and what is next.
 
@@ -97,6 +100,57 @@ first and falls back to `initialize` when the server does not answer as a
 request on the server), `:on-progress` and `:log-level`; `connect` takes
 `:on-log`.
 
+## Over HTTP
+
+```clojure
+(require '[presa.transport.http :as http])
+
+(def running (http/serve! srv {:port 3000}))   ; {:url "http://127.0.0.1:3000/mcp" ...}
+(def c (client/connect (http/url (:url running))))
+((:stop! running))
+```
+
+The server follows the 2026-07-28 Streamable HTTP rules: POST only,
+`MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` checked against the
+body, JSON responses that turn into event streams when a handler reports
+progress or logs, and only loopback origins unless `:allowed-origins` says
+otherwise. Initialize-era clients get an `Mcp-Session-Id`.
+`http/handler` returns the ring handler for embedding in another http-kit
+server.
+
+## Asking the client for input
+
+A tool, resource or prompt handler can ask the client for input before it
+finishes:
+
+```clojure
+(require '[presa.input :as input])
+
+{:name "greet"
+ :handler (fn [_ ctx]
+            (if-let [{:strs [content]} (server/input-response ctx "who")]
+              (str "Hello, " (get content "name"))
+              (server/input-required
+               {"who" (input/elicit "Who should I greet?"
+                                    {"type" "object" "properties" {"name" {"type" "string"}}})})))}
+```
+
+On 2026-07-28 this is an `input_required` result; the client answers on a
+new request with the server's signed `requestState`, and presa checks both.
+On an initialize-era session presa sends the request to the client and
+calls the handler again. A presa client answers with its `:handlers`:
+
+```clojure
+(client/connect transport {:handlers {"elicitation/create"
+                                      (fn [_] {"action" "accept" "content" {"name" "Ada"}})}})
+```
+
+## Conformance
+
+[conformance/](conformance/README.md) runs the official MCP conformance
+runner against a fixture server. All 37 required 2026-07-28 server
+scenarios pass.
+
 ## The example server
 
 [`examples/presa/example/hello.clj`](examples/presa/example/hello.clj) has two
@@ -146,6 +200,7 @@ Claude Code names the tools `mcp__presa-hello__echo` and
 ```sh
 bb test          # tests under Babashka
 bb jvm-test      # the same tests on the JVM (clojure -M:test)
+bb conformance   # the official conformance runner against the fixture
 ```
 
 ## License

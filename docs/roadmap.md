@@ -27,36 +27,40 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 
 ## 2. Multi round-trip requests
 
-- [ ] `input_required` results with elicitation, sampling and roots requests
-- [ ] `requestState` that the server can trust (signed)
-- [ ] Capability checks against the client's declared capabilities
+- [x] `input_required` results with elicitation, sampling and roots requests
+- [x] `requestState` that the server can trust (signed)
+- [x] Capability checks against the client's declared capabilities
 
 ## 3. Streamable HTTP
 
-- [ ] Server over http-kit: JSON and SSE responses, protocol headers,
+- [x] Server over http-kit: JSON and SSE responses, protocol headers,
       Origin and Host checks against DNS rebinding
-- [ ] Initialize-era sessions over HTTP (`Mcp-Session-Id`)
+- [x] Initialize-era sessions over HTTP (`Mcp-Session-Id`)
 
 ## 4. Conformance
 
-- [ ] A fixture server with the runner's scenario tools, resources and prompts
-- [ ] A script that runs the official runner's server leg against it, with a
+- [x] A fixture server with the runner's scenario tools, resources and prompts
+- [x] A script that runs the official runner's server leg against it, with a
       recorded baseline
 
 ## 5. Client
 
 - [x] In-process and stdio connections
-- [ ] HTTP connections
+- [x] HTTP connections
 - [x] Version negotiation: `server/discover`, falling back to `initialize`
 - [x] Tools, resources, prompts and completion calls, with pagination
-- [ ] Answering `input_required` with caller-supplied elicitation, sampling and
+- [x] Answering `input_required` with caller-supplied elicitation, sampling and
       roots functions
 - [x] Turning a server's tools into functions
 - [ ] The runner's client leg
 
 ## 6. Later
 
+- [ ] The conformance server leg at 2025-11-25 and 2025-06-18
+- [ ] Server-side `Mcp-Param-*` checks are done; request ids and `_meta`
+      on notifications are not checked yet
 - [ ] `subscriptions/listen`
 - [ ] Tasks extension (`io.modelcontextprotocol/tasks`)
 - [ ] OAuth 2.1 resource server and client flows
-- [ ] Full JSON Schema validation of tool arguments
+- [x] Basic JSON Schema validation of tool arguments and output (presa.schema)
+- [ ] Full JSON Schema 2020-12 validation, as an optional library
