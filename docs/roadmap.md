@@ -57,8 +57,7 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 ## 6. Later
 
 - [ ] The conformance server leg at 2025-11-25 and 2025-06-18
-- [ ] Server-side `Mcp-Param-*` checks are done; request ids and `_meta`
-      on notifications are not checked yet
+- [ ] `_meta` checks on notifications
 - [ ] `subscriptions/listen`
 - [ ] Tasks extension (`io.modelcontextprotocol/tasks`)
 - [ ] OAuth 2.1 resource server and client flows
