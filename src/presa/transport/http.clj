@@ -45,12 +45,14 @@
   (when (string? s)
     (let [s (str/trim s)]
       (if-let [[_ b64] (re-matches #"=\?base64\?(.*)\?=" s)]
+        ;; strict base64: padded, and only the base64 alphabet
+        (when (and (zero? (mod (count b64) 4)) (re-matches #"[A-Za-z0-9+/]*={0,2}" b64))
         (try
           (let [decoder (-> (java.nio.charset.StandardCharsets/UTF_8)
                             (.newDecoder)
                             (.onMalformedInput java.nio.charset.CodingErrorAction/REPORT))]
             (str (.decode decoder (java.nio.ByteBuffer/wrap (.decode (Base64/getDecoder) ^String b64)))))
-          (catch Exception _ nil))
+          (catch Exception _ nil)))
         s))))
 
 (def ^:private name-param
@@ -133,6 +135,39 @@
 
       (and name-key (not= (decode-header-value (header req "mcp-name")) (get params name-key)))
       (header-mismatch id "mcp-name does not match the request body"))))
+
+(declare param-headers)
+
+(defn- check-param-headers
+  "nil when a tools/call request's Mcp-Param-* headers match the arguments
+  its tool's input schema mirrors with x-mcp-header, else the rejection."
+  [srv req {:strs [id params]}]
+  (let [tool (get-in srv [:tools (get params "name")])
+        found (when tool (param-headers (:input-schema tool)))]
+    (when (sequential? found)
+      (some (fn [[h prop _]]
+              (let [k (str "mcp-param-" (str/lower-case h))
+                    v (get-in params ["arguments" prop])
+                    raw (header req k)
+                    decoded (decode-header-value raw)]
+                (cond
+                  (and (some? v) (nil? raw))
+                  (header-mismatch id (str "Missing or repeated required header: " k))
+
+                  (nil? raw) nil
+
+                  (or (nil? decoded)
+                      (and (not (str/starts-with? (str/trim raw) "=?base64?"))
+                           (not (re-matches #"[\x20-\x7E\t]*" raw))))
+                  (header-mismatch id (str k " is malformed"))
+
+                  (not (cond
+                         (string? v) (= decoded v)
+                         (boolean? v) (= decoded (str v))
+                         (integer? v) (= (parse-long (str/trim decoded)) (long v))
+                         :else true))
+                  (header-mismatch id (str k " does not match the request body")))))
+            found))))
 
 (def ^:private sse-headers
   {"content-type" "text/event-stream"
@@ -290,6 +325,7 @@
                    (cond
                      (some? meta-version)
                      (or (check-stateless-headers req message)
+                         (when (= "tools/call" method) (check-param-headers srv req message))
                          (execute srv req message {:stateless? true :log log}))
 
                      (= "initialize" method)
@@ -405,6 +441,11 @@
 
           :else (recur data))))))
 
+(def ^:private ^:dynamic *listing*
+  "Bound while the transport lists tools for itself: receives the messages
+  of that request instead of the client."
+  nil)
+
 (defn url
   "A presa.client transport to the Streamable HTTP endpoint at endpoint.
   Options: :headers (extra headers on every request, such as
@@ -421,9 +462,12 @@
            closed (atom false)
            deliver! (fn [m]
                       (let [m (filter-tools m annotations log)]
-                        (when (and (= (get m "id") (:initialize-id @state)) (get-in m ["result" "protocolVersion"]))
-                          (swap! state assoc :version (get-in m ["result" "protocolVersion"])))
-                        (on-message m)))
+                        (if *listing*
+                          (*listing* m)
+                          (do
+                            (when (and (= (get m "id") (:initialize-id @state)) (get-in m ["result" "protocolVersion"]))
+                              (swap! state assoc :version (get-in m ["result" "protocolVersion"])))
+                            (on-message m)))))
            post (fn [message]
                   (let [builder (HttpRequest/newBuilder uri)]
                     (doseq [[k v] (merge (request-headers message state annotations) headers)]
@@ -451,14 +495,32 @@
                         :else
                         (do (.close ^java.io.InputStream (.body resp))
                             (when (and (some? id) (not (<= 200 status 299)))
-                              (deliver! (rpc/error id -32000 (str "HTTP " status) {"status" status}))))))))]
+                              (deliver! (rpc/error id -32000 (str "HTTP " status) {"status" status}))))))))
+           list-tools! (fn [message]
+                         ;; Learn the tools' x-mcp-header annotations before
+                         ;; calling one this transport has not seen listed.
+                         (let [meta (get-in message ["params" "_meta"])]
+                           (loop [cursor nil pages 0]
+                             (let [id (str "presa-tools-" (swap! state update :list-id (fnil inc 0)) "-" pages)
+                                   result (atom nil)
+                                   request (rpc/request id "tools/list" (cond-> {}
+                                                                          meta (assoc "_meta" (dissoc meta "progressToken"))
+                                                                          cursor (assoc "cursor" cursor)))]
+                               (binding [*listing* (fn [m] (when (= id (get m "id")) (reset! result m)))]
+                                 (post request))
+                               (let [next-cursor (get-in @result ["result" "nextCursor"])]
+                                 (when (and (string? next-cursor) (< pages 100))
+                                   (recur next-cursor (inc pages))))))))]
        {:send! (fn [message]
                  (when @closed
                    (throw (ex-info "The transport is closed" {:kind :closed})))
                  (when (= "initialize" (get message "method"))
                    (swap! state assoc :initialize-id (get message "id")))
                  (future
-                   (try (post message)
+                   (try (when (and (= "tools/call" (get message "method"))
+                                   (not (contains? @annotations (get-in message ["params" "name"]))))
+                          (try (list-tools! message) (catch Exception _)))
+                        (post message)
                         (catch Throwable e
                           (log "HTTP request failed: " (ex-message e))
                           (when-let [id (get message "id")]

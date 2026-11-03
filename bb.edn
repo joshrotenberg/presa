@@ -4,4 +4,6 @@
  {test {:doc "Run the tests under Babashka."
         :task (apply (requiring-resolve 'presa.test-runner/-main) *command-line-args*)}
   jvm-test {:doc "Run the same tests on the JVM."
-            :task (shell "clojure -M:test")}}}
+            :task (shell "clojure -M:test")}
+  conformance {:doc "Run the official conformance runner's server leg against the fixture."
+               :task (apply shell "bb conformance/run.clj" *command-line-args*)}}}
