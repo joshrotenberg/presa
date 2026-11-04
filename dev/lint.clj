@@ -2,7 +2,8 @@
 ;; for CI and anyone without cj:
 ;;
 ;; - tracked *.md *.clj *.edn *.json files have no em dashes
-;; - commit subjects in <base>..HEAD use conventional-commit prefixes
+;; - commit subjects in <base>..HEAD (merge commits aside) use
+;;   conventional-commit prefixes
 ;; - commit messages have no Co-Authored-By, Assisted-By or Generated-By
 ;;   trailers and no "Generated with" lines
 ;;
@@ -29,7 +30,8 @@
 
 (def commit-problems
   (when base?
-    (for [sha (str/split-lines (git "rev-list" (str base "..HEAD")))
+    ;; merge commits are GitHub's or git's own wording, not ours
+    (for [sha (str/split-lines (git "rev-list" "--no-merges" (str base "..HEAD")))
           :when (seq sha)
           :let [subject (git "log" "-1" "--format=%s" sha)
                 body (git "log" "-1" "--format=%B" sha)]
