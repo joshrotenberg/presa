@@ -4,6 +4,7 @@
 [![conformance](https://github.com/joshrotenberg/presa/actions/workflows/conformance.yml/badge.svg?branch=main)](https://github.com/joshrotenberg/presa/actions/workflows/conformance.yml)
 [![conformance canary](https://github.com/joshrotenberg/presa/actions/workflows/canary.yml/badge.svg)](https://github.com/joshrotenberg/presa/actions/workflows/canary.yml)
 [![release](https://img.shields.io/github/v/release/joshrotenberg/presa?sort=semver)](https://github.com/joshrotenberg/presa/releases)
+[![Clojars Project](https://img.shields.io/clojars/v/io.github.joshrotenberg/presa.svg)](https://clojars.org/io.github.joshrotenberg/presa)
 [![MCP](https://img.shields.io/badge/MCP-2026--07--28-blue)](https://modelcontextprotocol.io)
 [![Babashka](https://img.shields.io/badge/babashka-1.13.225%2B-green)](https://babashka.org)
 [![JVM](https://img.shields.io/badge/JVM-21%20%7C%2025-green)](https://clojure.org)
