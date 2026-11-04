@@ -8,6 +8,7 @@
             [presa.example.hello-test]
             [presa.input-test]
             [presa.jsonrpc-test]
+            [presa.limits-test]
             [presa.protocol-test]
             [presa.schema-test]
             [presa.server-surface-test]
@@ -29,6 +30,7 @@
     presa.input-test
     presa.subscriptions-test
     presa.catalog-test
+    presa.limits-test
     presa.example.hello-test])
 
 (defn -main [& _]
