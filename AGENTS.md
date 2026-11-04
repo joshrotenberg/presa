@@ -44,7 +44,9 @@ The check enforces these:
   `revert`, with an optional scope and `!` (git's own `Revert "..."` subject
   also passes). Merge commits are not checked.
 - Commit messages have no Co-Authored-By, Assisted-By or Generated-By
-  trailers and no "Generated with" lines.
+  trailers and no "Generated with" lines. `bb lint` allows a Co-authored-by
+  trailer for a GitHub bot account, which GitHub adds when a bot's pull
+  request (release-please's) is squash-merged.
 - Tracked `*.md` `*.clj` `*.edn` `*.json` files have no em dashes (vendored
   files under `conformance/schema/` aside).
 

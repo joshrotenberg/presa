@@ -6,7 +6,9 @@
 ;; - commit subjects in <base>..HEAD (merge commits aside) use
 ;;   conventional-commit prefixes
 ;; - commit messages have no Co-Authored-By, Assisted-By or Generated-By
-;;   trailers and no "Generated with" lines
+;;   trailers and no "Generated with" lines; a Co-authored-by trailer for a
+;;   GitHub bot account (GitHub adds one when a bot's pull request, such as
+;;   release-please's, is squash-merged) is not attribution and is allowed
 ;;
 ;;   bb lint [base]    (base defaults to origin/main; skipped when missing)
 (require '[babashka.process :as p]
@@ -31,6 +33,9 @@
 (def prefix #"^(?:(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)\s]+\))?!?: \S|Revert \").*")
 (def attribution #"(?im)^\s*(co-authored-by|assisted-by|generated-by):|generated with")
 
+;; Co-authored-by: name[bot] <id+name[bot]@users.noreply.github.com>
+(def bot-co-author #"(?im)^\s*co-authored-by:\s*[^<\n]*\[bot\]\s*<[^>\n]*\[bot\]@users\.noreply\.github\.com>\s*$")
+
 (def commit-problems
   (when base?
     ;; merge commits are GitHub's or git's own wording, not ours
@@ -40,7 +45,7 @@
                 body (git "log" "-1" "--format=%B" sha)]
           problem [(when-not (re-matches prefix subject)
                      (str (subs sha 0 7) " " subject ": no conventional-commit prefix"))
-                   (when (re-find attribution body)
+                   (when (re-find attribution (str/replace body bot-co-author ""))
                      (str (subs sha 0 7) " " subject ": attribution line"))]
           :when problem]
       problem)))
