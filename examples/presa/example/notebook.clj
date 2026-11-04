@@ -259,25 +259,33 @@
   [{"title" "Shopping" "body" "Milk, eggs and coffee." "tags" ["home"]}
    {"title" "Release checklist" "body" "Run the conformance lanes, then tag the release." "tags" ["work"]}])
 
-(defn- serve-http [port]
-  (let [issuer (System/getenv "NOTEBOOK_ISSUER")
-        jwks (System/getenv "NOTEBOOK_JWKS")
-        resource (str "http://127.0.0.1:" port "/mcp")
-        secured? (and issuer jwks)
+(defn serve-http
+  "Serve a notebook with sample notes over Streamable HTTP at
+  http://127.0.0.1:port/mcp. With :issuer and :jwks-url (or :keys, a map of
+  kid to public key, in place of a JWKS URL), it is an OAuth resource server
+  for that authorization server, and the tools that change notes need
+  notes:write. Returns http/serve!'s {:port :url :stop!}."
+  [{:keys [port issuer jwks-url keys]}]
+  (let [resource (str "http://127.0.0.1:" port "/mcp")
+        secured? (and issuer (or jwks-url keys))
         srv (notebook {:notes sample-notes :write-scopes (when secured? ["notes:write"])})
         config (when secured?
                  (auth/resource-server
                   {:resource resource
-                   :verify (jwt/verifier {:audience resource :issuer issuer :jwks-url jwks})
+                   :verify (jwt/verifier (cond-> {:audience resource :issuer issuer}
+                                           jwks-url (assoc :jwks-url jwks-url)
+                                           keys (assoc :keys keys)))
                    :authorization-servers [issuer]
-                   :scopes-supported ["notes:read" "notes:write"]}))
-        {:keys [url]} (http/serve! srv (cond-> {:port port} config (assoc :auth config)))]
-    (binding [*out* *err*]
-      (println "notebook at" url (if config "(OAuth)" "")))
-    @(promise)))
+                   :scopes-supported ["notes:read" "notes:write"]}))]
+    (http/serve! srv (cond-> {:port port} config (assoc :auth config)))))
 
 (defn -main [& args]
   (if-let [port (second (drop-while #(not= "--http" %) args))]
-    (serve-http (parse-long port))
+    (let [{:keys [url]} (serve-http {:port (parse-long port)
+                                     :issuer (System/getenv "NOTEBOOK_ISSUER")
+                                     :jwks-url (System/getenv "NOTEBOOK_JWKS")})]
+      (binding [*out* *err*]
+        (println "notebook at" url (if (System/getenv "NOTEBOOK_ISSUER") "(OAuth)" "")))
+      @(promise))
     (do (stdio/serve! (notebook {:notes sample-notes}))
         (shutdown-agents))))
