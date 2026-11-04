@@ -1,5 +1,5 @@
 (ns presa.client
-  "Call MCP servers: in process, over stdio, or (later) over HTTP.
+  "Call MCP servers: in process, over stdio, or over Streamable HTTP.
 
   `connect` opens a transport, negotiates a revision and returns a client.
   It tries MCP 2026-07-28 first with server/discover, and falls back to
@@ -11,8 +11,8 @@
   A transport is a function of one map, {:on-message f :on-close g}, that
   opens a connection and returns {:send! (fn [message]) :close! (fn [])}.
   It calls f with each parsed message from the server, from any thread,
-  and g once when the connection ends. `in-process` and
-  presa.transport.stdio/command make them.
+  and g once when the connection ends. `in-process`,
+  presa.transport.stdio/command and presa.transport.http/url make them.
 
   Errors are ex-info: :kind :protocol for a JSON-RPC error from the server
   (with :code, :message and :data), :kind :timeout when no response came in
@@ -44,7 +44,14 @@
 
 ;; The client
 
-(def default-timeout-ms 60000)
+(def default-timeout-ms
+  "How long a request waits for its response unless :timeout-ms says
+  otherwise."
+  60000)
+
+(def version
+  "presa's version, which a client reports in its default :client-info."
+  "0.0.0") ; x-release-please-version
 
 (defn- protocol-error [{:strs [code message data]}]
   (ex-info (str "MCP error " code ": " message)
@@ -390,7 +397,7 @@
                    the capabilities its handlers cover."
   ([transport] (connect transport {}))
   ([transport opts]
-   (let [opts (merge {:client-info {"name" "presa" "version" "0.0.0"}
+   (let [opts (merge {:client-info {"name" "presa" "version" version}
                       :capabilities (handler-capabilities (:handlers opts))
                       :versions protocol/versions}
                      opts)
@@ -441,7 +448,8 @@
 
 (defn info
   "What negotiation found: {:version :server-info :server-capabilities
-  :instructions}."
+  :instructions}, and on 2026-07-28 :supported-versions, the revisions the
+  server listed."
   [client]
   @(:state client))
 
@@ -473,17 +481,22 @@
 
 (defn call-tool
   "Call a tool and return its result map (\"content\", \"isError\", maybe
-  \"structuredContent\"). A tool that fails returns isError true rather than
-  throwing."
+  \"structuredContent\"), or, on a client with :tasks, a task the server
+  created (see `task?` and `await-task`). A tool that fails returns isError
+  true rather than throwing."
   ([client name] (call-tool client name {} {}))
   ([client name arguments] (call-tool client name arguments {}))
   ([client name arguments opts]
    (request client "tools/call" {"name" name "arguments" (or arguments {})} opts)))
 
-(defn list-resources [client & [opts]]
+(defn list-resources
+  "Every resource the server lists, following pagination."
+  [client & [opts]]
   (all-pages client "resources/list" "resources" {} opts))
 
-(defn list-resource-templates [client & [opts]]
+(defn list-resource-templates
+  "Every resource template the server lists, following pagination."
+  [client & [opts]]
   (all-pages client "resources/templates/list" "resourceTemplates" {} opts))
 
 (defn read-resource
@@ -492,10 +505,14 @@
   [client uri & [opts]]
   (get (request client "resources/read" {"uri" uri} opts) "contents"))
 
-(defn list-prompts [client & [opts]]
+(defn list-prompts
+  "Every prompt the server lists, following pagination."
+  [client & [opts]]
   (all-pages client "prompts/list" "prompts" {} opts))
 
 (defn get-prompt
+  "Get the prompt named name with arguments (strings to strings): a map
+  with \"messages\" and maybe \"description\"."
   ([client name] (get-prompt client name {} {}))
   ([client name arguments] (get-prompt client name arguments {}))
   ([client name arguments opts]
@@ -544,7 +561,8 @@
 (defn listen
   "Open a 2026-07-28 subscriptions/listen stream. notifications says what to
   listen for: {\"toolsListChanged\" true \"promptsListChanged\" true
-  \"resourcesListChanged\" true \"resourceSubscriptions\" [uri ..]}.
+  \"resourcesListChanged\" true \"resourceSubscriptions\" [uri ..]}, and
+  on a client with :tasks \"taskIds\" [id ..] for notifications/tasks.
   on-notification gets each notification on the stream, the server's
   acknowledgement (notifications/subscriptions/acknowledged) first.
 
