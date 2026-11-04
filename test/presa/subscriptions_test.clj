@@ -5,9 +5,10 @@
             [presa.server :as server]
             [presa.transport.http :as http]))
 
-(defn- make-server []
+(defn- make-server [& [versions]]
   (server/server
    {:name "t" :version "1" :list-changed true :subscribe true
+    :versions (or versions ["2026-07-28"])
     :tools [{:name "change_tools" :handler (fn [_ ctx] (server/list-changed! ctx "tools") "changed")}
             {:name "change_prompts" :handler (fn [_ ctx] (server/list-changed! ctx "prompts") "changed")}
             {:name "touch" :handler (fn [{:strs [uri]} ctx] (server/resource-updated! ctx uri) "touched")}]
@@ -91,7 +92,7 @@
       (is (= -32602 (err {"resourceSubscriptions" ["relative"]}))))))
 
 (deftest initialize-era-notifications
-  (let [srv (make-server)
+  (let [srv (make-server ["2026-07-28" "2025-11-25"])
         sent (atom [])
         notify #(swap! sent conj %)
         [session] (server/handle srv {} (rpc/request 0 "initialize" {"protocolVersion" "2025-11-25" "capabilities" {}

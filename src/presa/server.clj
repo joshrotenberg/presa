@@ -749,7 +749,7 @@
       (when (and (:list-changed srv) notify)
         (swap! (:listeners srv) assoc [session-id :list-changed]
                {:kinds #{"tools" "prompts" "resources"}
-                :send (fn [method params] (notify (rpc/notification method params)))}))
+                :send (fn [method params] (notify (rpc/notification method (not-empty params))))}))
       [{:version version :client-info client-info :client-capabilities capabilities
         :log-level (:log-level srv) :session-id session-id}
        (fn [] (initialize-result srv version))])))
@@ -795,7 +795,7 @@
                  {:kinds #{}
                   :uris [uri]
                   :send (let [notify (:notify extra)]
-                          (fn [method params] (notify (rpc/notification method params))))})
+                          (fn [method params] (notify (rpc/notification method (not-empty params)))))})
           (swap! (:listeners srv) dissoc [(:session-id session) uri]))
         [session (constantly {})])
 
