@@ -1,7 +1,8 @@
 # Releasing
 
-presa is released as git tags. Clojure CLI and Babashka projects depend on
-a tag (`:git/tag` with its `:git/sha`); there is no Clojars artifact.
+Each release is a git tag and a Clojars artifact,
+`io.github.joshrotenberg/presa`. Clojure CLI and Babashka projects can depend
+on either (`:mvn/version`, or `:git/tag` with its `:git/sha`).
 
 ## How a release happens
 
@@ -13,6 +14,10 @@ a tag (`:git/tag` with its `:git/sha`); there is no Clojars artifact.
    `fix` commits the patch version.
 3. Merging that pull request tags `vX.Y.Z` on `main` and creates the GitHub
    release.
+4. The workflow's `clojars` job then checks out the tag and runs
+   `clojure -T:build deploy` (`build.clj`), which builds the jar and its pom
+   and uploads them to Clojars. CI builds the same jar on every pull
+   request.
 
 ## Repository settings it needs
 
@@ -24,16 +29,28 @@ a tag (`:git/tag` with its `:git/sha`); there is no Clojars artifact.
   workflows, so without the secret the release pull request's CI does not
   run until it is pushed to again.
 
+- A `CLOJARS_TOKEN` secret: a Clojars deploy token. The group
+  `io.github.joshrotenberg` is verified on Clojars by signing in with the
+  GitHub account. A `CLOJARS_USERNAME` repository variable names the Clojars
+  user the token belongs to (default `joshrotenberg`).
+
 ## Depending on a release
 
 ```clojure
 ;; deps.edn or bb.edn
+{:deps {io.github.joshrotenberg/presa {:mvn/version "0.1.0"}}}
+;; or
 {:deps {io.github.joshrotenberg/presa {:git/tag "v0.1.0" :git/sha "<the tag's commit, 7 or more characters>"}}}
 ```
 
 `git ls-remote https://github.com/joshrotenberg/presa.git refs/tags/v0.1.0`
-prints the sha. The repository is private, so the git dependency needs
-GitHub credentials.
+prints the sha.
+
+## Building the jar locally
+
+```sh
+clojure -T:build jar     # target/presa-<version>.jar and target/classes/META-INF/maven/.../pom.xml
+```
 
 ## Pins outside the release line
 

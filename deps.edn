@@ -4,7 +4,11 @@
         ;; 2.9: 2.8.1 on the JVM never notices a client that disconnects
         ;; from an open event stream; Babashka's bundled http-kit does
         http-kit/http-kit {:mvn/version "2.9.0-beta4"}}
- :aliases {;; full JSON Schema validation for presa.schema.networknt (JVM only)
+ :aliases {;; clojure -T:build jar | deploy (build.clj)
+           :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
+                          slipset/deps-deploy {:mvn/version "0.2.5"}}
+                   :ns-default build}
+           ;; full JSON Schema validation for presa.schema.networknt (JVM only)
            :schema-full {:extra-deps {com.networknt/json-schema-validator {:mvn/version "3.0.0"}}}
            :example {:extra-paths ["examples"]
                      :main-opts ["-m" "presa.example.hello"]}
