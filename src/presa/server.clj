@@ -337,7 +337,10 @@
     (cond-> (-> result
                 (assoc "resultType" "complete")
                 (update "_meta" (fnil assoc {}) (:server-info protocol/meta-keys) (:info srv)))
-      (cached-methods method) (assoc "ttlMs" (get-in srv [:cache :ttl-ms])
+      (cached-methods method) (assoc "ttlMs" (if (or (seq (:input-responses context)) (some? (:state context)))
+                                               ;; a result that took input is not one to reuse
+                                               0
+                                               (get-in srv [:cache :ttl-ms]))
                                      "cacheScope" (get-in srv [:cache :scope])))))
 
 ;; Pagination
