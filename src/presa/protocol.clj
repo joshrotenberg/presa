@@ -42,7 +42,8 @@
    :client-info "io.modelcontextprotocol/clientInfo"
    :client-capabilities "io.modelcontextprotocol/clientCapabilities"
    :server-info "io.modelcontextprotocol/serverInfo"
-   :log-level "io.modelcontextprotocol/logLevel"})
+   :log-level "io.modelcontextprotocol/logLevel"
+   :subscription-id "io.modelcontextprotocol/subscriptionId"})
 
 (def log-levels
   "The log levels, least severe first (the RFC 5424 severities)."

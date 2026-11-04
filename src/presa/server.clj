@@ -205,6 +205,11 @@
       of at least 32 bytes (default: random for this server map, so tokens
       do not survive a restart or reach another instance)
   - :state-ttl-ms  how long a requestState token stays valid (default 300000)
+  - :list-changed  true to advertise listChanged for tools, prompts and
+      resources and serve subscriptions/listen; then `list-changed!` tells
+      listening clients that a list changed
+  - :subscribe  true to advertise resources.subscribe, so clients can listen
+      for `resource-updated!` on resources they name
   - :logging  true to advertise the logging capability, so `log!` sends
       messages to clients that ask for them
   - :log-level  the level an initialize-era session logs at until the client
@@ -216,7 +221,8 @@
   a map {\"values\" [...] \"total\" n \"hasMore\" b}. At most 100 values are
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
-           versions page-size cache logging log-level validate? state-secret state-ttl-ms]
+           versions page-size cache logging log-level validate? state-secret state-ttl-ms
+           list-changed subscribe]
     :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000}}]
   (when-not (and (string? name) (string? version))
     (throw (ex-info "A server needs string :name and :version" {:kind :invalid-input})))
@@ -248,6 +254,10 @@
      :prompt-order prompt-order
      :page-size page-size
      :logging (boolean logging)
+     :list-changed (boolean list-changed)
+     :subscribe (boolean subscribe)
+     ;; open subscriptions/listen streams, by a key of their own
+     :listeners (atom {})
      :validate? (boolean validate?)
      :state-secret (if state-secret
                      (request-state/secret-bytes state-secret)
@@ -266,9 +276,12 @@
 
 (defn- capabilities [srv]
   (cond-> {}
-    (seq (:tools srv)) (assoc "tools" {})
-    (or (seq (:resources srv)) (seq (:templates srv))) (assoc "resources" {})
-    (seq (:prompts srv)) (assoc "prompts" {})
+    (seq (:tools srv)) (assoc "tools" (if (:list-changed srv) {"listChanged" true} {}))
+    (or (seq (:resources srv)) (seq (:templates srv)))
+    (assoc "resources" (cond-> {}
+                         (:list-changed srv) (assoc "listChanged" true)
+                         (:subscribe srv) (assoc "subscribe" true)))
+    (seq (:prompts srv)) (assoc "prompts" (if (:list-changed srv) {"listChanged" true} {}))
     (completions? srv) (assoc "completions" {})
     (:logging srv) (assoc "logging" {})))
 
@@ -562,6 +575,51 @@
 
 (defn- ping [_ _ _] {})
 
+(declare notify!)
+
+(def ^:private flags
+  {"toolsListChanged" "tools" "promptsListChanged" "prompts" "resourcesListChanged" "resources"})
+
+(defn- subscriptions-listen
+  "Hold a subscriptions/listen request open: acknowledge what the server
+  will send, deliver matching notifications, and answer when the server
+  ends the stream (a cancelled stream gets no answer)."
+  [srv params context]
+  (let [requested (get params "notifications")
+        uris (get requested "resourceSubscriptions")
+        id (:request-id context)
+        sub-key (:subscription-id protocol/meta-keys)]
+    (when-not (map? requested)
+      (throw (error :invalid-params "subscriptions/listen requires a notifications object")))
+    (doseq [k (keys flags)]
+      (when (and (contains? requested k) (not (boolean? (get requested k))))
+        (throw (error :invalid-params (str k " must be a boolean")))))
+    (when (and (contains? requested "resourceSubscriptions")
+               (not (and (sequential? uris) (<= (count uris) 1000)
+                         (every? #(and (string? %) (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" %)) uris))))
+      (throw (error :invalid-params "resourceSubscriptions must be a list of absolute URIs")))
+    (let [caps (capabilities srv)
+          kinds (set (for [[flag kind] flags
+                           :when (and (true? (get requested flag))
+                                      (get-in caps [kind "listChanged"]))]
+                       kind))
+          uris (when (and (:subscribe srv) (seq uris)) (vec uris))
+          ack (cond-> (into {} (for [[flag kind] flags :when (kinds kind)] [flag true]))
+                uris (assoc "resourceSubscriptions" uris))
+          tag {sub-key id}
+          listener-key (Object.)]
+      (notify! context "notifications/subscriptions/acknowledged" {"notifications" ack "_meta" tag})
+      (swap! (:listeners srv) assoc listener-key
+             {:kinds kinds
+              :uris uris
+              :send (fn [method params] (notify! context method (assoc params "_meta" tag)))
+              :stop (:stopped context)})
+      (try
+        @(:stopped context)
+        {"_meta" tag}
+        (finally
+          (swap! (:listeners srv) dissoc listener-key))))))
+
 (def ^:private method-table
   "Each method: its function, the capability the server must have, and
   whether the initialize-era revisions serve it."
@@ -575,13 +633,17 @@
    "resources/read" {:f resources-read :capability "resources" :legacy? true}
    "prompts/list" {:f prompts-list :capability "prompts" :legacy? true}
    "prompts/get" {:f prompts-get :capability "prompts" :legacy? true}
-   "completion/complete" {:f completion-complete :capability "completions" :legacy? true}})
+   "completion/complete" {:f completion-complete :capability "completions" :legacy? true}
+   "subscriptions/listen" {:f subscriptions-listen :capability ::subscriptions :legacy? false}})
 
 (defn- method-fn [srv method legacy?]
   (let [{:keys [f capability] :as m} (get method-table method)]
     (if (and m
              (if legacy? (:legacy? m) (:stateless? m true))
-             (or (nil? capability) (contains? (capabilities srv) capability)))
+             (cond
+               (nil? capability) true
+               (= ::subscriptions capability) (or (:list-changed srv) (:subscribe srv))
+               :else (contains? (capabilities srv) capability)))
       f
       (throw (error :method-not-found (str "Method not found: " method))))))
 
@@ -773,8 +835,11 @@
      :request
      (let [id (get message "id")
            cancelled (atom false)
+           stopped (promise)
            extra {:notify (or notify (fn [_]))
                   :request send-request
+                  :server srv
+                  :stopped stopped
                   :cancelled? (fn [] @cancelled)}
            fail (fn [e]
                   (if (:presa/error (ex-data e))
@@ -790,7 +855,10 @@
                       (catch Exception e
                         (let [response (fail e)]
                           {:session session :respond (constantly response)})))]
-       (assoc prepared :request-id id :cancel! (fn [] (reset! cancelled true))))
+       (assoc prepared
+              :request-id id
+              :method (get message "method")
+              :cancel! (fn [] (reset! cancelled true) (deliver stopped :cancelled))))
 
      ;; notifications/initialized and the rest need no answer; responses to
      ;; requests presa never sent are dropped.
@@ -884,3 +952,32 @@
                          {:kind :protocol :code code :message message :data data})))
 
        :else (get response "result")))))
+
+;; Subscriptions
+
+(defn- server-of [srv-or-context]
+  (if (contains? srv-or-context :listeners) srv-or-context (:server srv-or-context)))
+
+(defn list-changed!
+  "Tell clients listening for it that a list changed. kind is \"tools\",
+  \"prompts\" or \"resources\". Takes the server, or a handler's context."
+  [srv-or-context kind]
+  (let [method (str "notifications/" kind "/list_changed")]
+    (doseq [{:keys [kinds send]} (vals @(:listeners (server-of srv-or-context)))
+            :when (contains? kinds kind)]
+      (try (send method {}) (catch Exception _)))))
+
+(defn resource-updated!
+  "Tell clients listening to uri, or to a resource uri is under, that it
+  changed. Takes the server, or a handler's context."
+  [srv-or-context uri]
+  (doseq [{:keys [uris send]} (vals @(:listeners (server-of srv-or-context)))
+          :when (some #(or (= % uri) (str/starts-with? uri (str (str/replace % #"/$" "") "/"))) uris)]
+    (try (send "notifications/resources/updated" {"uri" uri}) (catch Exception _))))
+
+(defn end-subscriptions!
+  "End every open subscriptions/listen stream with its final result, as on
+  shutdown."
+  [srv]
+  (doseq [{:keys [stop]} (vals @(:listeners srv))]
+    (deliver stop :ended)))

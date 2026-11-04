@@ -20,7 +20,7 @@
             [presa.protocol :as protocol]
             [presa.server :as server])
   (:import (java.net URI)
-           (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse
+           (java.net.http HttpClient HttpClient$Version HttpRequest HttpRequest$BodyPublishers HttpResponse
                           HttpResponse$BodyHandlers)
            (java.time Duration)
            (java.util Base64 UUID)))
@@ -187,7 +187,7 @@
   "Run one request over an http-kit channel. session is a session entry
   (initialize-era) or nil (2026-07-28). on-session is called with the
   prepared result before the work starts, to register a new session."
-  [srv req message {:keys [session stateless? on-session headers log]}]
+  [srv req message {:keys [session stateless? on-session headers log keepalive-ms]}]
   (hk/as-channel
    req
    {:on-open
@@ -195,13 +195,16 @@
       (let [lock (Object.)
             streaming (atom false)
             closed (atom false)
+            gone (promise)
             emit! (fn [m]
-                    (locking lock
-                      (when-not @closed
-                        (when-not @streaming
-                          (hk/send! ch {:status 200 :headers (merge sse-headers headers)} false)
-                          (reset! streaming true))
-                        (hk/send! ch (sse-event m) false))))
+                    (when-not (locking lock
+                                (or @closed
+                                    (do (when-not @streaming
+                                          (hk/send! ch {:status 200 :headers (merge sse-headers headers)} false)
+                                          (reset! streaming true))
+                                        (hk/send! ch (sse-event m) false))))
+                      ;; the write failed: the client has gone
+                      (deliver gone true)))
             outgoing (:outgoing session)
             client-request (when session
                              (fn [method params timeout-ms]
@@ -247,6 +250,22 @@
                            (swap! (:running session) dissoc request-id))))))]
         (when (and session (some? request-id))
           (swap! (:running session) assoc request-id {:cancel! cancel! :work work}))
+        (when (= "subscriptions/listen" (get message "method"))
+          ;; keep idle subscription streams open through proxies
+          (future
+            (loop []
+              (Thread/sleep (long keepalive-ms))
+              (when (locking lock
+                      (when (and @streaming (not @closed))
+                        (or (hk/send! ch ": keepalive\n\n" false)
+                            (do (deliver gone true) false))))
+                (recur)))))
+        ;; A failed write is how http-kit learns of some disconnects.
+        (future
+          (when @gone
+            (when-not (locking lock (let [done @closed] (reset! closed true) done))
+              (when cancel! (cancel!))
+              (future-cancel work))))
         (hk/on-close ch (fn [_]
                           (when-not (locking lock (let [done @closed] (reset! closed true) done))
                             ;; the client went away first: cancel its request
@@ -261,9 +280,12 @@
                       loopback ones; requests without Origin are allowed
   - :allowed-hosts    when given, a set of Host header values (or a
                       predicate) the server accepts; others get 403
+  - :keepalive-ms     how often an idle subscription stream gets a comment,
+                      which also finds clients that have gone (default 15000)
   - :log              (fn [& parts]) for diagnostics"
   ([srv] (handler srv {}))
-  ([srv {:keys [path allowed-origins allowed-hosts log] :or {path "/mcp" log (fn [& _])}}]
+  ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms]
+         :or {path "/mcp" log (fn [& _]) keepalive-ms 15000}}]
    (let [sessions (atom {})]
      (fn [req]
        (let [origin (header req "origin")
@@ -326,7 +348,7 @@
                      (some? meta-version)
                      (or (check-stateless-headers req message)
                          (when (= "tools/call" method) (check-param-headers srv req message))
-                         (execute srv req message {:stateless? true :log log}))
+                         (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms}))
 
                      (= "initialize" method)
                      (let [id (str (UUID/randomUUID))
@@ -334,6 +356,7 @@
                        (execute srv req message
                                 {:session entry
                                  :log log
+                                 :keepalive-ms keepalive-ms
                                  :headers {"mcp-session-id" id}
                                  :on-session (fn [{s :session}]
                                                (when (:version s)
@@ -347,12 +370,12 @@
                        (if (and version (not= (str/trim version) (:version @(:session session))))
                          (json-response 400 (rpc/error (get message "id") :invalid-request
                                                        "MCP-Protocol-Version does not match the session"))
-                         (execute srv req message {:session session :log log})))
+                         (execute srv req message {:session session :log log :keepalive-ms keepalive-ms})))
 
                      ;; no _meta version and no session: let the server say
                      ;; what is missing
                      :else
-                     (execute srv req message {:stateless? true :log log}))))))))))))
+                     (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms}))))))))))))
 
 (defn serve!
   "Serve srv over HTTP. Options are `handler`'s plus :host (default
@@ -365,7 +388,11 @@
          url-host (if (str/includes? host ":") (str "[" host "]") host)]
      {:port port
       :url (str "http://" url-host ":" port path)
-      :stop! (fn [] @(hk/server-stop! s {:timeout 1000}) nil)})))
+      :stop! (fn []
+               ;; end subscription streams with their final result first
+               (server/end-subscriptions! srv)
+               @(hk/server-stop! s {:timeout 1000})
+               nil)})))
 
 ;; Client
 
@@ -454,11 +481,14 @@
   ([endpoint {:keys [headers connect-timeout-ms log] :or {connect-timeout-ms 10000 log (fn [& _])}}]
    (fn [{:keys [on-message on-close]}]
      (let [client (-> (HttpClient/newBuilder)
+                      (.version HttpClient$Version/HTTP_1_1)
                       (.connectTimeout (Duration/ofMillis connect-timeout-ms))
                       (.build))
            uri (URI. endpoint)
            state (atom {})
            annotations (atom {})
+           ;; open event streams by request id, closed to cancel the request
+           streams (atom {})
            closed (atom false)
            deliver! (fn [m]
                       (let [m (filter-tools m annotations log)]
@@ -481,7 +511,12 @@
                         (swap! state assoc :session-id sid))
                       (cond
                         (str/starts-with? content-type "text/event-stream")
-                        (read-events (.body resp) deliver!)
+                        (let [body (.body resp)]
+                          (when (some? id) (swap! streams update id assoc :body body))
+                          (try (read-events body deliver!)
+                               (catch java.io.IOException e
+                                 (when-not (contains? @streams id) (throw e)))
+                               (finally (when (some? id) (swap! streams dissoc id)))))
 
                         (str/starts-with? content-type "application/json")
                         (let [body (slurp (.body resp) :encoding "UTF-8")
@@ -516,6 +551,13 @@
                    (throw (ex-info "The transport is closed" {:kind :closed})))
                  (when (= "initialize" (get message "method"))
                    (swap! state assoc :initialize-id (get message "id")))
+                 (if-let [{:keys [^java.io.InputStream body]}
+                          (and (= "notifications/cancelled" (get message "method"))
+                               (get @streams (get-in message ["params" "requestId"])))]
+                   ;; over HTTP, closing the response stream (and with it the
+                   ;; connection) cancels the request
+                   (do (swap! streams dissoc (get-in message ["params" "requestId"]))
+                       (try (.close body) (catch Exception _)))
                  (future
                    (try (when (and (= "tools/call" (get message "method"))
                                    (not (contains? @annotations (get-in message ["params" "name"]))))
@@ -524,7 +566,7 @@
                         (catch Throwable e
                           (log "HTTP request failed: " (ex-message e))
                           (when-let [id (get message "id")]
-                            (on-message (rpc/error id -32000 (str "HTTP request failed: " (ex-message e)))))))))
+                            (on-message (rpc/error id -32000 (str "HTTP request failed: " (ex-message e))))))))))
         :close! (fn []
                   (when (compare-and-set! closed false true)
                     (when-let [sid (:session-id @state)]

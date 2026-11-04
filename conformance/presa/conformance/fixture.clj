@@ -71,10 +71,10 @@
            (if-let [n (accepted ctx "user_name" "name")]
              (str "Hello, " n "!")
              (server/input-required {"user_name" name-request}))))
-   (tool "test_trigger_tool_change" "Would notify list subscribers; presa has no subscriptions yet"
-         (fn [_ _] "tools changed"))
-   (tool "test_trigger_prompt_change" "Would notify list subscribers; presa has no subscriptions yet"
-         (fn [_ _] "prompts changed"))
+   (tool "test_trigger_tool_change" "Tells listening clients the tool list changed"
+         (fn [_ ctx] (server/list-changed! ctx "tools") "tools changed"))
+   (tool "test_trigger_prompt_change" "Tells listening clients the prompt list changed"
+         (fn [_ ctx] (server/list-changed! ctx "prompts") "prompts changed"))
    (tool "test_input_required_result_elicitation" "Elicits a name, then greets"
          (fn [_ ctx]
            (if-let [n (accepted ctx "user_name" "name")]
@@ -207,6 +207,7 @@
   (server/server {:name "presa-conformance" :version "0.1.0"
                   :versions (if (= "legacy" profile) protocol/versions [protocol/latest-version])
                   :logging true
+                  :list-changed true
                   :tools tools
                   :resources resources
                   :resource-templates resource-templates

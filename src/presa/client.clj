@@ -57,6 +57,9 @@
       (deliver p message))))
 
 (defn- route-notification [client {:strs [method params] :as message}]
+  (when-let [f (get @(:subscriptions client)
+                    (get-in params ["_meta" (:subscription-id protocol/meta-keys)]))]
+    (f message))
   (let [{:keys [on-log on-notification]} (:opts client)]
     (case method
       "notifications/progress"
@@ -272,6 +275,7 @@
                  :conn (atom nil)
                  :pending (atom {})
                  :progress (atom {})
+                 :subscriptions (atom {})
                  :next-id (atom 0)
                  :closed (atom false)
                  :state (atom {})}
@@ -409,3 +413,49 @@
        (filter #(= "text" (get % "type")))
        (map #(get % "text"))
        (str/join "\n")))
+
+(defn listen
+  "Open a 2026-07-28 subscriptions/listen stream. notifications says what to
+  listen for: {\"toolsListChanged\" true \"promptsListChanged\" true
+  \"resourcesListChanged\" true \"resourceSubscriptions\" [uri ..]}.
+  on-notification gets each notification on the stream, the server's
+  acknowledgement (notifications/subscriptions/acknowledged) first.
+
+  Returns {:acknowledged p :stop! f :done p}: acknowledged is a promise of
+  the acknowledgement's params; (stop!) cancels the stream; done is a
+  promise of the final result when the server ends the stream, or :stopped,
+  or the exception that ended it."
+  [client notifications on-notification]
+  (when-not (stateless? client)
+    (throw (ex-info "subscriptions/listen is part of 2026-07-28 only" {:kind :unsupported})))
+  (let [id (str "presa-listen-" (swap! (:next-id client) inc))
+        acknowledged (promise)
+        done (promise)
+        stopped (atom false)
+        p (promise)
+        params (assoc {"notifications" notifications} "_meta" (request-meta client {}))]
+    (swap! (:subscriptions client) assoc id
+           (fn [message]
+             (when (= "notifications/subscriptions/acknowledged" (get message "method"))
+               (deliver acknowledged (get message "params")))
+             (on-notification message)))
+    (swap! (:pending client) assoc id p)
+    ((:send! @(:conn client)) (rpc/request id "subscriptions/listen" params))
+    (future
+      (let [response @p]
+        (swap! (:subscriptions client) dissoc id)
+        (deliver acknowledged nil)
+        (deliver done (cond
+                        @stopped :stopped
+                        (= ::closed response) (ex-info "The connection closed" {:kind :closed})
+                        (contains? response "error") (protocol-error (get response "error"))
+                        :else (get response "result")))))
+    {:acknowledged acknowledged
+     :done done
+     :stop! (fn []
+              (when (compare-and-set! stopped false true)
+                (try ((:send! @(:conn client))
+                      (rpc/notification "notifications/cancelled" {"requestId" id "reason" "stopped"}))
+                     (catch Exception _))
+                (swap! (:pending client) dissoc id)
+                (deliver p {"result" nil})))}))

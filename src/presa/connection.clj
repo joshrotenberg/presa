@@ -60,7 +60,7 @@
         receive! (fn [message]
                    (if (answer message)
                      nil
-                   (let [{:keys [respond request-id cancel! cancel]} (settle message)]
+                   (let [{:keys [respond request-id cancel! cancel method]} (settle message)]
                      (when-let [{:keys [cancel! work]} (and (some? cancel) (get @running cancel))]
                        (cancel!)
                        (when work (future-cancel work)))
@@ -69,7 +69,7 @@
                        (when-let [response (respond)] (send response))
                        (let [token (Object.)
                              mine? (fn [m] (= token (get-in m [request-id :token])))
-                             _ (swap! running assoc request-id {:cancel! cancel! :token token})
+                             _ (swap! running assoc request-id {:cancel! cancel! :token token :method method})
                              work (future
                                     (binding [*out* *err*]
                                       (try
@@ -84,6 +84,11 @@
     {:receive! receive!
      :close! (fn []
                (doseq [[_ p] @outgoing] (deliver p ::closed))
+               ;; subscription streams never finish on their own
+               (doseq [{:keys [method cancel! work]} (vals @running)
+                       :when (= "subscriptions/listen" method)]
+                 (cancel!)
+                 (when work (future-cancel work)))
                (run! (fn [{:keys [work]}] (when work (try @work (catch Exception _))))
                      (vals @running))
                nil)

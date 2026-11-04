@@ -26,12 +26,13 @@ runner's `dist/index.js`).
 
 | | Scenarios | Checks |
 |---|---|---|
-| Required (37) | 37 with no FAILURE or WARNING | `server-stateless` has 5 SKIPPED: the `subscriptions/listen` checks, since presa advertises no `listChanged` or `subscribe` yet |
+| Required (37) | 37 with no FAILURE, WARNING or SKIPPED check | `server-stateless`: 30 of 30, including the `subscriptions/listen` checks |
 | Pending, unscored (3) | `http-header-validation`, `http-custom-header-server-validation`, `json-schema-2020-12` pass | |
 | Tasks extension, unscored (10) | 9 fail, 1 skipped | presa does not implement `io.modelcontextprotocol/tasks` |
 
-Totals over all 50 scenarios run: 159 SUCCESS, 30 FAILURE (all Tasks), 6
-SKIPPED, 1 INFO (`server-sse-multiple-streams`: every response was JSON).
+Totals over all 50 scenarios run: 164 SUCCESS, 30 FAILURE (all Tasks), 1
+SKIPPED (Tasks), 1 INFO (`server-sse-multiple-streams`: every response was
+JSON).
 
 Not measured yet: the client leg, and the server leg at 2025-11-25 and
 2025-06-18.

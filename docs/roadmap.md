@@ -58,7 +58,7 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 
 - [ ] The conformance server leg at 2025-11-25 and 2025-06-18
 - [ ] `_meta` checks on notifications
-- [ ] `subscriptions/listen`
+- [x] `subscriptions/listen`, with `list-changed!` and `resource-updated!`
 - [ ] Tasks extension (`io.modelcontextprotocol/tasks`)
 - [ ] OAuth 2.1 resource server and client flows
 - [x] Basic JSON Schema validation of tool arguments and output (presa.schema)
