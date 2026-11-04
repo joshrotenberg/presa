@@ -52,14 +52,29 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 - [x] Answering `input_required` with caller-supplied elicitation, sampling and
       roots functions
 - [x] Turning a server's tools into functions
-- [ ] The runner's client leg
+- [ ] The runner's client leg: joshrotenberg/presa#5
 
-## 6. Later
+## 6. Done since
 
-- [ ] The conformance server leg at 2025-11-25 and 2025-06-18
-- [ ] `_meta` checks on notifications
+- [x] The conformance server leg at 2025-11-25 and 2025-06-18
 - [x] `subscriptions/listen`, with `list-changed!` and `resource-updated!`
-- [ ] Tasks extension (`io.modelcontextprotocol/tasks`)
-- [ ] OAuth 2.1 resource server and client flows
 - [x] Basic JSON Schema validation of tool arguments and output (presa.schema)
-- [ ] Full JSON Schema 2020-12 validation, as an optional library
+- [x] CI: tests on Babashka and the JVM, conventions, conformance lanes
+      against baselines, a weekly canary
+
+## Backlog
+
+The open work is filed as issues, labelled by priority (`p1` to `p3`) and
+area: <https://github.com/joshrotenberg/presa/issues>.
+
+| Issue | Priority |
+|---|---|
+| joshrotenberg/presa#5 client conformance leg and its CI lane | p1 |
+| joshrotenberg/presa#6 Tasks extension | p2 |
+| joshrotenberg/presa#7 OAuth 2.1 resource server | p2 |
+| joshrotenberg/presa#8 OAuth 2.1 client flows | p2 |
+| joshrotenberg/presa#9 changing a running server's catalog | p2 |
+| joshrotenberg/presa#10 limits on sizes, streams and notifications | p2 |
+| joshrotenberg/presa#19 guides beyond the README | p2 |
+| joshrotenberg/presa#20 release process | p2 |
+| joshrotenberg/presa#11 to #18, #21, #22 | p3 |
