@@ -41,7 +41,12 @@
       (is (= :invalid-token (:error (v (str (rs claims) "x")))))
       (is (= :invalid-token (:error (v "not.a.jwt"))))
       (is (= :invalid-token (:error (v (jwt/sign claims {:alg "HS256" :key (.getBytes "guess")}))))
-          "no HS256 secret configured"))
+          "no HS256 secret configured")
+      (is (= :invalid-token (:error (v (rs (dissoc claims "exp"))))) "a token without exp")
+      (is (= :invalid-token (:error (v (rs (assoc claims "exp" "never"))))) "an exp that is not a number"))
+    (testing ":require-exp? false accepts a token without exp"
+      (let [lenient (jwt/verifier {:audience aud :keys {"r" (.getPublic rsa)} :require-exp? false})]
+        (is (= "ada" (:subject (lenient (rs (dissoc claims "exp" "iss"))))))))
     (testing "JWK round trip"
       (is (= (seq (.getEncoded (jwt/jwk->public-key (jwt/public-key->jwk (.getPublic rsa)))))
              (seq (.getEncoded (.getPublic rsa)))))
@@ -58,7 +63,7 @@
                   {:port 0 :ip "127.0.0.1" :legacy-return-value? false})
         url (str "http://127.0.0.1:" (org.httpkit.server/server-port jwks-srv) "/jwks")
         v (jwt/verifier {:audience "x" :jwks-url url :refresh-ms 60000})
-        tok (fn [kid] (jwt/sign {"sub" "s" "aud" "x"} {:alg "RS256" :kid kid :key (.getPrivate rsa)}))]
+        tok (fn [kid] (jwt/sign {"sub" "s" "aud" "x" "exp" (+ now 600)} {:alg "RS256" :kid kid :key (.getPrivate rsa)}))]
     (try
       (is (= "s" (:subject (v (tok "k1")))))
       (is (= "s" (:subject (v (tok "k1")))))

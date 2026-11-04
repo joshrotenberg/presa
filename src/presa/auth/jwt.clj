@@ -197,11 +197,14 @@
                java.security.PublicKey (a nil kid matches tokens without one)
   - :secret    an HS256 shared secret (string or bytes)
   - :leeway-s  clock skew allowed for exp and nbf, in seconds (default 0)
+  - :require-exp?  refuse a token without a numeric exp (default true; RFC
+               9068 requires exp in access tokens)
 
   The function returns {:subject :client-id :scopes :claims} for a valid
   token, or {:error kind :description text} with kind :invalid-token,
   :expired, :wrong-issuer or :wrong-audience."
-  [{:keys [audience issuer jwks-url keys secret leeway-s refresh-ms] :or {leeway-s 0 refresh-ms 60000}}]
+  [{:keys [audience issuer jwks-url keys secret leeway-s refresh-ms require-exp?]
+    :or {leeway-s 0 refresh-ms 60000 require-exp? true}}]
   (when-not audience
     (throw (ex-info "A JWT verifier needs :audience" {:kind :invalid-input})))
   (let [accepted (audiences (if (string? audience) [audience] (vec audience)))
@@ -231,6 +234,7 @@
               (nil? key) (refuse :invalid-token "No key verifies this token")
               (not (verify-signature alg key (.getBytes (str h "." p) "UTF-8") signature))
               (refuse :invalid-token "The token signature is invalid")
+              (and require-exp? (not (number? (get claims "exp")))) (refuse :invalid-token "The token has no exp")
               (and (number? (get claims "exp")) (> now (+ (get claims "exp") leeway-s))) (refuse :expired "The token has expired")
               (and (number? (get claims "nbf")) (< (+ now leeway-s) (get claims "nbf"))) (refuse :invalid-token "The token is not yet valid")
               (and issuer (not= issuer (get claims "iss"))) (refuse :wrong-issuer "The token is from another issuer")
