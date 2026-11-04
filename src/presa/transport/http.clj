@@ -182,7 +182,30 @@
    :lock (Object.)
    :outgoing (atom {})
    :running (atom {})
-   :next-id (atom 0)})
+   :next-id (atom 0)
+   ;; the session's GET event stream, when the client holds one open
+   :stream (atom nil)})
+
+(defn- session-notify
+  "Send a session-level message on the session's GET stream, when open;
+  without one it is dropped, as the client asked for no stream."
+  [entry]
+  (fn [message]
+    (when-let [ch @(:stream entry)]
+      (when-not (hk/send! ch (sse-event message) false)
+        (compare-and-set! (:stream entry) ch nil)))))
+
+(defn- session-stream
+  "Open the GET event stream of an initialize-era session."
+  [req entry]
+  (hk/as-channel
+   req
+   {:on-open (fn [ch]
+               (hk/send! ch {:status 200 :headers sse-headers} false)
+               ;; a newer stream replaces an older one
+               (when-let [old (first (reset-vals! (:stream entry) ch))]
+                 (try (hk/close old) (catch Throwable _))))
+    :on-close (fn [ch _] (compare-and-set! (:stream entry) ch nil))}))
 
 (defn- execute
   "Run one request over an http-kit channel. session is a session entry
@@ -219,7 +242,9 @@
                                        (throw (ex-info (str method " timed out") {:kind :timeout :method method})))
                                      r)
                                    (finally (swap! outgoing dissoc id))))))
-            opts {:notify emit! :request client-request}
+            opts {:notify emit!
+                  :request client-request
+                  :session-notify (when session (session-notify session))}
             prepared (if session
                        (locking (:lock session)
                          (let [p (server/prepare srv @(:session session) message opts)]
@@ -326,7 +351,15 @@
            (if-let [entry (get @sessions sid)]
              (do (swap! sessions dissoc sid)
                  (server/close-session! srv @(:session entry))
+                 (when-let [ch @(:stream entry)] (try (hk/close ch) (catch Throwable _)))
                  {:status 204})
+             (rejection 404 :invalid-request "Session not found"))
+
+           (and (= :get (:request-method req)) sid)
+           (if-let [entry (get @sessions sid)]
+             (if (contains? (media-types (header req "accept")) "text/event-stream")
+               (session-stream req entry)
+               (rejection 406 :invalid-request "Accept must list text/event-stream"))
              (rejection 404 :invalid-request "Session not found"))
 
            (not= :post (:request-method req))
@@ -567,14 +600,18 @@
                          (when-let [^HttpResponse resp (open-get (:last-event-id seen))]
                            (let [more (try (read-events (.body resp) deliver!) (catch java.io.IOException _ {}))]
                              (recur (merge seen more) (inc attempts)))))))
-           session-stream! (fn []
+           session-stream! (fn [ready]
                              ;; The standalone stream an initialize-era server
                              ;; uses for requests and notifications outside a
                              ;; request; stops when the server has none (405).
+                             ;; ready is delivered once the first attempt is
+                             ;; answered, so later requests can wait for it.
                              (future
                                (loop [seen {}]
                                  (when-not @closed
-                                   (when-let [^HttpResponse resp (try (open-get (:last-event-id seen)) (catch Exception _ nil))]
+                                   (when-let [^HttpResponse resp (try (open-get (:last-event-id seen))
+                                                                      (catch Exception _ nil)
+                                                                      (finally (deliver ready true)))]
                                      (swap! state assoc :session-stream (.body resp))
                                      (let [more (try (read-events (.body resp) deliver!) (catch java.io.IOException _ {}))
                                            seen (merge seen more)]
@@ -649,10 +686,17 @@
                    (try (when (and (= "tools/call" (get message "method"))
                                    (not (contains? @annotations (get-in message ["params" "name"]))))
                           (try (list-tools! message) (catch Exception _)))
+                        ;; a request sent just after initialized waits for the
+                        ;; session stream, where the server may answer it
+                        (when-let [ready (and (not= "notifications/initialized" (get message "method"))
+                                              (:stream-ready @state))]
+                          (deref ready 2000 nil))
                         (post message)
                         (when (and (= "notifications/initialized" (get message "method"))
                                    (:session-id @state))
-                          (session-stream!))
+                          (let [ready (promise)]
+                            (swap! state assoc :stream-ready ready)
+                            (session-stream! ready)))
                         (catch Throwable e
                           (log "HTTP request failed: " (.getName (class e)) ": " (ex-message e)
                                (when-let [c (ex-cause e)] (str " (" (.getName (class c)) ": " (ex-message c) ")")))
