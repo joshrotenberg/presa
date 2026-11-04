@@ -2,6 +2,7 @@
   "Runs every test namespace and exits with a failing status when any test
   fails, under Babashka (bb test) and on the JVM (clojure -M:test)."
   (:require [clojure.test :as test]
+            [presa.auth-test]
             [presa.catalog-test]
             [presa.client-cache-test]
             [presa.client-test]
@@ -33,6 +34,7 @@
     presa.subscriptions-test
     presa.catalog-test
     presa.limits-test
+    presa.auth-test
     presa.example.hello-test])
 
 (defn -main [& _]

@@ -16,6 +16,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [org.httpkit.server :as hk]
+            [presa.auth :as auth]
             [presa.jsonrpc :as rpc]
             [presa.protocol :as protocol]
             [presa.server :as server])
@@ -211,7 +212,7 @@
   "Run one request over an http-kit channel. session is a session entry
   (initialize-era) or nil (2026-07-28). on-session is called with the
   prepared result before the work starts, to register a new session."
-  [srv req message {:keys [session stateless? on-session headers log keepalive-ms]}]
+  [srv req message {:keys [session stateless? on-session headers log keepalive-ms identity]}]
   (hk/as-channel
    req
    {:on-open
@@ -243,6 +244,7 @@
                                      r)
                                    (finally (swap! outgoing dissoc id))))))
             opts {:notify emit!
+                  :auth identity
                   :request client-request
                   :session-notify (when session (session-notify session))}
             prepared (if session
@@ -327,17 +329,30 @@
                       predicate) the server accepts; others get 403
   - :max-body-bytes   the largest request body (default 2000000); a larger
                       one gets 413
+  - :auth             a presa.auth/resource-server config: serve its
+                      metadata document and require a bearer token on every
+                      request; handlers see the identity as (:auth context)
   - :keepalive-ms     how often an idle subscription stream gets a comment,
                       which also finds clients that have gone (default 15000)
   - :log              (fn [& parts]) for diagnostics"
   ([srv] (handler srv {}))
   ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms max-body-bytes]
+         auth-config :auth
          :or {path "/mcp" log (fn [& _]) keepalive-ms 15000 max-body-bytes default-max-body-bytes}}]
    (let [sessions (atom {})]
      (fn [req]
        (let [origin (header req "origin")
-             sid (header req "mcp-session-id")]
+             sid (header req "mcp-session-id")
+             authn (delay (when auth-config (auth/authenticate auth-config req)))
+             caller (fn [] (:auth @authn))
+             ;; an initialize-era session belongs to the subject that opened it
+             session-of (fn [sid]
+                          (when-let [entry (get @sessions sid)]
+                            (when (= (:subject entry) (:subject (caller))) entry)))]
          (cond
+           (and auth-config (= (:metadata-path auth-config) (:uri req)))
+           (auth/metadata-response auth-config req)
+
            (not= path (:uri req))
            {:status 404 :headers {"content-type" "text/plain"} :body "Not found"}
 
@@ -347,8 +362,11 @@
            (and allowed-hosts (not (allowed? allowed-hosts (header req "host"))))
            (rejection 403 :invalid-request "Host is not allowed")
 
+           (:response @authn)
+           (:response @authn)
+
            (and (= :delete (:request-method req)) sid)
-           (if-let [entry (get @sessions sid)]
+           (if-let [entry (session-of sid)]
              (do (swap! sessions dissoc sid)
                  (server/close-session! srv @(:session entry))
                  (when-let [ch @(:stream entry)] (try (hk/close ch) (catch Throwable _)))
@@ -356,7 +374,7 @@
              (rejection 404 :invalid-request "Session not found"))
 
            (and (= :get (:request-method req)) sid)
-           (if-let [entry (get @sessions sid)]
+           (if-let [entry (session-of sid)]
              (if (contains? (media-types (header req "accept")) "text/event-stream")
                (session-stream req entry)
                (rejection 406 :invalid-request "Accept must list text/event-stream"))
@@ -380,7 +398,7 @@
                         ;; a leading byte order mark is not part of the JSON
                         (if (str/starts-with? s (str (char 0xFEFF))) (subs s 1) s))
                  message (if (nil? body) ::too-large (try (rpc/parse-line body) (catch Exception _ ::unparsed)))
-                 session (when sid (get @sessions sid))]
+                 session (when sid (session-of sid))]
              (case message
                ::too-large (rejection 413 :invalid-request (str "Request body exceeds " max-body-bytes " bytes"))
                ::unparsed (rejection 400 :parse-error "Parse error")
@@ -410,13 +428,14 @@
                      (some? meta-version)
                      (or (check-stateless-headers req message)
                          (when (= "tools/call" method) (check-param-headers srv req message))
-                         (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms}))
+                         (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)}))
 
                      (= "initialize" method)
                      (let [id (str (UUID/randomUUID))
-                           entry (new-session {})]
+                           entry (assoc (new-session {}) :subject (:subject (caller)))]
                        (execute srv req message
                                 {:session entry
+                                 :identity (caller)
                                  :log log
                                  :keepalive-ms keepalive-ms
                                  :headers {"mcp-session-id" id}
@@ -432,12 +451,12 @@
                        (if (and version (not= (str/trim version) (:version @(:session session))))
                          (json-response 400 (rpc/error (get message "id") :invalid-request
                                                        "MCP-Protocol-Version does not match the session"))
-                         (execute srv req message {:session session :log log :keepalive-ms keepalive-ms})))
+                         (execute srv req message {:session session :log log :keepalive-ms keepalive-ms :identity (caller)})))
 
                      ;; no _meta version and no session: let the server say
                      ;; what is missing
                      :else
-                     (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms}))))))))))))
+                     (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)}))))))))))))
 
 (defn serve!
   "Serve srv over HTTP. Options are `handler`'s plus :host (default

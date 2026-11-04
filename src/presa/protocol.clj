@@ -32,6 +32,7 @@
    :method-not-found -32601
    :invalid-params -32602
    :internal-error -32603
+   :insufficient-scope -32003
    :header-mismatch -32020
    :missing-client-capability -32021
    :unsupported-protocol-version -32022})
