@@ -5,3 +5,5 @@
 target/
 *.jar
 .DS_Store
+tmp/
+conformance/node_modules/

@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "The official MCP conformance runner, pinned for presa's conformance script",
+  "dependencies": {
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.12"
+  }
+}

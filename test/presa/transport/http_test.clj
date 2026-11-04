@@ -1,0 +1,206 @@
+(ns presa.transport.http-test
+  (:require [clojure.data.json :as json]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [presa.client :as client]
+            [presa.input :as input]
+            [presa.protocol :as protocol]
+            [presa.server :as server]
+            [presa.transport.http :as http])
+  (:import (java.net URI)
+           (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers)))
+
+(def srv
+  (server/server
+   {:name "t" :version "1" :versions protocol/versions :logging true
+    :tools [{:name "echo" :handler (fn [{:strs [text]} _] text)}
+            {:name "slow"
+             :handler (fn [_ ctx]
+                        (server/progress! ctx 1 {:total 2})
+                        (server/log! ctx "info" "halfway")
+                        (server/progress! ctx 2 {:total 2})
+                        "slow done")}
+            {:name "ask"
+             :handler (fn [_ ctx]
+                        (if-let [r (server/input-response ctx "n")]
+                          (str "hi " (get-in r ["content" "name"]))
+                          (server/input-required {"n" (input/elicit "name?" {"type" "object"})} {"k" 1})))}
+            {:name "héllo wörld" :handler (fn [_ _] "unicode name")}
+            {:name "region"
+             :input-schema {"type" "object" "properties" {"region" {"type" "string" "x-mcp-header" "Region"}}}
+             :handler (fn [{:strs [region]} _] (str "region " region))}]
+    :resources [{:uri "x:/a" :name "a" :handler (fn [_] "A")}]}))
+
+(defmacro with-server [[binding opts] & body]
+  `(let [~binding (http/serve! srv ~opts)]
+     (try ~@body (finally ((:stop! ~binding))))))
+
+(def meta-2026
+  {"io.modelcontextprotocol/protocolVersion" "2026-07-28"
+   "io.modelcontextprotocol/clientCapabilities" {"elicitation" {}}})
+
+(defn- post
+  "POST body (a map, or a raw string) with headers; {:status :headers :body}."
+  ([url body] (post url body {}))
+  ([url body headers]
+   (let [method (when (map? body) (get body "method"))
+         defaults (cond-> {"content-type" "application/json"
+                           "accept" "application/json, text/event-stream"}
+                    (and (map? body) (get-in body ["params" "_meta"]))
+                    (assoc "mcp-protocol-version" (get-in body ["params" "_meta" "io.modelcontextprotocol/protocolVersion"]))
+                    method (assoc "mcp-method" method)
+                    (#{"tools/call" "prompts/get"} method) (assoc "mcp-name" (http/encode-header-value (get-in body ["params" "name"])))
+                    (= "resources/read" method) (assoc "mcp-name" (get-in body ["params" "uri"])))
+         builder (HttpRequest/newBuilder (URI. url))]
+     (doseq [[k v] (merge defaults headers) :when v] (.header builder k v))
+     (.POST builder (HttpRequest$BodyPublishers/ofString (if (string? body) body (json/write-str body))))
+     (let [resp (.send (HttpClient/newHttpClient) (.build builder) (HttpResponse$BodyHandlers/ofString))]
+       {:status (.statusCode resp)
+        :content-type (.orElse (.firstValue (.headers resp) "content-type") nil)
+        :session-id (.orElse (.firstValue (.headers resp) "mcp-session-id") nil)
+        :body (.body resp)}))))
+
+(defn- json-body [r] (json/read-str (:body r)))
+
+(defn- request [id method params]
+  {"jsonrpc" "2.0" "id" id "method" method "params" (update params "_meta" #(merge meta-2026 %))})
+
+(deftest stateless-requests-over-http
+  (with-server [s {}]
+    (let [url (:url s)]
+      (testing "a plain JSON response"
+        (let [r (post url (request 1 "tools/call" {"name" "echo" "arguments" {"text" "hi"}}))]
+          (is (= 200 (:status r)))
+          (is (str/starts-with? (:content-type r) "application/json"))
+          (is (= "hi" (get-in (json-body r) ["result" "content" 0 "text"])))
+          (is (nil? (:session-id r)))))
+      (testing "progress and log messages turn the response into an event stream"
+        (let [r (post url (request 2 "tools/call" {"name" "slow" "_meta" (assoc meta-2026 "progressToken" "p"
+                                                                                "io.modelcontextprotocol/logLevel" "info")}))
+              events (->> (str/split-lines (:body r))
+                          (filter #(str/starts-with? % "data: "))
+                          (map #(json/read-str (subs % 6))))]
+          (is (str/starts-with? (:content-type r) "text/event-stream"))
+          (is (= ["notifications/progress" "notifications/message" "notifications/progress" nil]
+                 (map #(get % "method") events)))
+          (is (= "slow done" (get-in (last events) ["result" "content" 0 "text"])))))
+      (testing "statuses for errors"
+        (let [r (post url (request 3 "ping" {}))]
+          (is (= 404 (:status r)))
+          (is (= {"jsonrpc" "2.0" "id" 3 "error" {"code" -32601 "message" "Method not found: ping"}} (json-body r))))
+        (is (= 400 (:status (post url {"jsonrpc" "2.0" "id" 4 "method" "tools/list" "params" {}}
+                                  {"mcp-protocol-version" "2026-07-28"}))))
+        (is (= 400 (:status (post url (request 5 "resources/read" {"uri" "x:/missing"})))))
+        (let [r (post url (assoc-in (request 6 "tools/list" {}) ["params" "_meta" "io.modelcontextprotocol/protocolVersion"] "v999.0.0"))]
+          (is (= 400 (:status r)))
+          (is (= -32022 (get-in (json-body r) ["error" "code"])))
+          (is (= "v999.0.0" (get-in (json-body r) ["error" "data" "requested"])))))
+      (testing "header checks"
+        (let [body (assoc-in (request 7 "tools/list" {}) ["params" "_meta" "io.modelcontextprotocol/protocolVersion"] "v999.0.0")
+              r (post url body {"mcp-protocol-version" "2026-07-28"})]
+          (is (= 400 (:status r)))
+          (is (= {"code" -32020 "message" "Protocol header does not match request metadata"
+                  "data" {"header" "2026-07-28" "body" "v999.0.0"}}
+                 (get (json-body r) "error"))))
+        (doseq [[label headers] [["no version header" {"mcp-protocol-version" nil}]
+                                 ["no method header" {"mcp-method" nil}]
+                                 ["a method header in other case" {"mcp-method" "TOOLS/CALL"}]
+                                 ["no name header" {"mcp-name" nil}]
+                                 ["another name" {"mcp-name" "other"}]]]
+          (let [r (post url (request 8 "tools/call" {"name" "echo" "arguments" {"text" "x"}}) headers)]
+            (is (= 400 (:status r)) label)
+            (is (= -32020 (get-in (json-body r) ["error" "code"])) label)))
+        (testing "a padded or base64 name is accepted"
+          (is (= 200 (:status (post url (request 9 "tools/call" {"name" "echo" "arguments" {"text" "x"}})
+                                    {"mcp-name" "  echo  "}))))
+          (is (= "unicode name"
+                 (get-in (json-body (post url (request 10 "tools/call" {"name" "héllo wörld"})))
+                         ["result" "content" 0 "text"]))))))))
+
+(deftest admission
+  (with-server [s {}]
+    (let [url (:url s)
+          body (request 1 "tools/list" {})
+          send-raw (fn [method]
+                     (.statusCode (.send (HttpClient/newHttpClient)
+                                         (-> (HttpRequest/newBuilder (URI. url)) (.method method (HttpRequest$BodyPublishers/noBody)) (.build))
+                                         (HttpResponse$BodyHandlers/ofString))))]
+      (is (= 405 (send-raw "GET")))
+      (is (= 404 (:status (post (str/replace url "/mcp" "/other") body))))
+      (is (= 415 (:status (post url body {"content-type" "text/plain"}))))
+      (is (= 406 (:status (post url body {"accept" "application/json"}))))
+      (let [r (post url "{not json")]
+        (is (= 400 (:status r)))
+        (is (= -32700 (get-in (json-body r) ["error" "code"]))))
+      (is (= 202 (:status (post url {"jsonrpc" "2.0" "method" "notifications/cancelled" "params" {"requestId" 1}}))))
+      (is (= 202 (:status (post url {"jsonrpc" "2.0" "id" 1 "result" {}}))))
+      (testing "DNS rebinding: foreign origins are refused, loopback ones and none are not"
+        (is (= 403 (:status (post url body {"origin" "http://evil.example.com"}))))
+        (is (= 200 (:status (post url body {"origin" (str "http://localhost:" (:port s))}))))
+        (is (= 200 (:status (post url body {"origin" (str "http://127.0.0.1:" (:port s))}))))))
+    (testing "allowed origins and hosts"
+      (with-server [s {:allowed-origins #{"https://app.example.com"} :allowed-hosts #(str/starts-with? % "127.0.0.1:")}]
+        (is (= 200 (:status (post (:url s) (request 1 "tools/list" {}) {"origin" "https://app.example.com"})))))
+      (with-server [s {:allowed-hosts #{"good.example.com"}}]
+        (is (= 403 (:status (post (:url s) (request 1 "tools/list" {})))) "the Host does not match")))))
+
+(deftest initialize-era-sessions-over-http
+  (with-server [s {}]
+    (let [url (:url s)
+          init {"jsonrpc" "2.0" "id" 0 "method" "initialize"
+                "params" {"protocolVersion" "2025-06-18" "capabilities" {} "clientInfo" {"name" "c" "version" "0"}}}
+          r (post url init)
+          sid (:session-id r)]
+      (is (= 200 (:status r)))
+      (is (string? sid))
+      (is (= "2025-06-18" (get-in (json-body r) ["result" "protocolVersion"])))
+      (let [with-session {"mcp-session-id" sid "mcp-protocol-version" "2025-06-18"}]
+        (is (= 202 (:status (post url {"jsonrpc" "2.0" "method" "notifications/initialized"} with-session))))
+        (let [r (post url {"jsonrpc" "2.0" "id" 1 "method" "tools/list"} with-session)]
+          (is (= 200 (:status r)))
+          (is (= 5 (count (get-in (json-body r) ["result" "tools"]))))
+          (is (not (contains? (get (json-body r) "result") "resultType"))))
+        (testing "errors are 200 for these clients"
+          (is (= 200 (:status (post url {"jsonrpc" "2.0" "id" 2 "method" "nope"} with-session)))))
+        (is (= 400 (:status (post url {"jsonrpc" "2.0" "id" 3 "method" "tools/list"}
+                                  (assoc with-session "mcp-protocol-version" "2025-11-25")))))
+        (is (= 404 (:status (post url {"jsonrpc" "2.0" "id" 4 "method" "tools/list"} {"mcp-session-id" "unknown"}))))))))
+
+(deftest clients-over-http
+  (with-server [s {}]
+    (doseq [versions [[protocol/latest-version] ["2025-11-25"]]]
+      (testing (str "over " versions)
+        (let [logs (atom [])
+              c (client/connect (http/url (:url s))
+                                {:versions versions :log-level "info" :on-log #(swap! logs conj %)
+                                 :handlers {"elicitation/create" (fn [_] {"action" "accept" "content" {"name" "Ada"}})}})]
+          (try
+            (is (= (first versions) (:version (client/info c))))
+            (is (= "hi" (client/text (client/call-tool c "echo" {"text" "hi"}))))
+            (is (= "hi Ada" (client/text (client/call-tool c "ask"))))
+            (is (= "unicode name" (client/text (client/call-tool c "héllo wörld"))))
+            (is (= [{"uri" "x:/a" "text" "A"}] (client/read-resource c "x:/a")))
+            (let [progress (atom [])]
+              (is (= "slow done" (client/text (client/call-tool c "slow" {} {:on-progress #(swap! progress conj %)}))))
+              (is (= [1 2] (map #(get % "progress") @progress))))
+            (when (= [protocol/latest-version] versions)
+              (is (= [{"level" "info" "data" "halfway"}] @logs))
+              (testing "x-mcp-header arguments travel as Mcp-Param headers"
+                (is (= "region eu west" (client/text (client/call-tool c "region" {"region" "eu west"}))))))
+            (finally (client/close c))))))))
+
+(deftest header-values
+  (is (= "plain value" (http/encode-header-value "plain value")))
+  (is (= "true" (http/encode-header-value true)))
+  (is (= "42" (http/encode-header-value 42)))
+  (is (= "=?base64?IHBhZGRlZA==?=" (http/encode-header-value " padded")))
+  (is (= "héllo" (http/decode-header-value (http/encode-header-value "héllo"))))
+  (is (nil? (http/decode-header-value "=?base64?//79?=")))
+  (testing "x-mcp-header annotations"
+    (is (= [["Region" "region" "string"]]
+           (http/param-headers {"properties" {"region" {"type" "string" "x-mcp-header" "Region"} "q" {"type" "string"}}})))
+    (doseq [bad [{"properties" {"a" {"type" "number" "x-mcp-header" "A"}}}
+                 {"properties" {"a" {"type" "string" "x-mcp-header" "Has Space"}}}
+                 {"properties" {"a" {"type" "string" "x-mcp-header" ""}}}
+                 {"properties" {"a" {"type" "string" "x-mcp-header" "X"} "b" {"type" "string" "x-mcp-header" "x"}}}]]
+      (is (= :presa.transport.http/invalid (http/param-headers bad)) (pr-str bad)))))
