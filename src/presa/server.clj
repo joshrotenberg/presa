@@ -62,6 +62,13 @@
   [message]
   {"content" [(content/text message)] "isError" true})
 
+(defn- emit!
+  "Hand event to the server's :on-event function, if it has one. A failing
+  function never fails the request."
+  [srv event]
+  (when-let [f (:on-event srv)]
+    (try (f event) (catch Throwable _ nil))))
+
 (defn- tool-result
   "A handler's return value as a tools/call result. A string becomes text, a
   map with \"content\" is a result already, any other map is structured
@@ -212,6 +219,17 @@
       for `resource-updated!` on resources they name
   - :max-subscriptions  the most subscriptions/listen streams open at once
       (default 256); another is refused with -32603, which HTTP sends as 503
+  - :on-event  (fn [event]) for instrumentation: each event is a map with
+      :event and its fields:
+        :request/start     :method :request-id :version
+        :request/stop      :method :request-id :duration-ms, :outcome
+                           (:ok, :error with :error-code, or :cancelled)
+        :request/rejected  :method :request-id :error-code, for a request
+                           refused before it ran (bad _meta, unknown
+                           method, and the like)
+        :tool/error        :tool :request-id :exception, for a handler that
+                           threw (the client gets an isError result)
+      Exceptions the function throws are ignored.
   - :logging  true to advertise the logging capability, so `log!` sends
       messages to clients that ask for them
   - :log-level  the level an initialize-era session logs at until the client
@@ -224,7 +242,7 @@
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
            versions page-size cache logging log-level validate? state-secret state-ttl-ms
-           list-changed subscribe max-subscriptions]
+           list-changed subscribe max-subscriptions on-event]
     :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000
          max-subscriptions 256}}]
   (when-not (and (string? name) (string? version))
@@ -263,6 +281,7 @@
      :list-changed (boolean list-changed)
      :subscribe (boolean subscribe)
      :max-subscriptions max-subscriptions
+     :on-event on-event
      ;; open subscriptions/listen streams, by a key of their own
      :listeners (atom {})
      :validate? (boolean validate?)
@@ -511,7 +530,9 @@
                 (catch Exception e
                   (if (:presa/error (ex-data e))
                     (throw e)
-                    (tool-error (or (ex-message e) (str (class e)))))))
+                    (do (emit! srv {:event :tool/error :tool tool-name :request-id (:request-id context)
+                                    :exception e})
+                        (tool-error (or (ex-message e) (str (class e))))))))
             result (if (input-required? v) v (tool-result v))]
         (when (and (:validate? srv) (:output-schema tool) (not (input-required? result))
                    (not (get result "isError")))
@@ -938,11 +959,24 @@
                       (let [[session' respond] (request srv session message extra)]
                         {:session session'
                          :respond (fn []
-                                    (let [response (try (rpc/result id (respond))
+                                    (let [t0 (System/nanoTime)
+                                          method (get message "method")
+                                          _ (emit! srv {:event :request/start :method method :request-id id
+                                                        :version (or (:version session') (get-in message ["params" "_meta" (:protocol-version protocol/meta-keys)]))})
+                                          response (try (rpc/result id (respond))
                                                         (catch Exception e (fail e)))]
+                                      (emit! srv (cond-> {:event :request/stop :method method :request-id id
+                                                          :duration-ms (/ (- (System/nanoTime) t0) 1e6)
+                                                          :outcome (cond @cancelled :cancelled
+                                                                         (contains? response "error") :error
+                                                                         :else :ok)}
+                                                   (contains? response "error")
+                                                   (assoc :error-code (get-in response ["error" "code"]))))
                                       (when-not @cancelled response)))})
                       (catch Exception e
                         (let [response (fail e)]
+                          (emit! srv {:event :request/rejected :method (get message "method") :request-id id
+                                      :error-code (get-in response ["error" "code"])})
                           {:session session :respond (constantly response)})))]
        (assoc prepared
               :request-id id
