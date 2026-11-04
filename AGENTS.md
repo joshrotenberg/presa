@@ -23,6 +23,10 @@ fails, then checks the conventions below:
 - `bb test`
 - `bb jvm-test`
 
+CI runs those, `bb lint` (the conventions below, without cj) and the
+conformance lanes (`bb conformance <revision>`, each against
+`conformance/baselines/<revision>.json`; see `conformance/README.md`).
+
 ## Conventions
 
 The check enforces these:

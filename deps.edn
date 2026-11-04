@@ -1,6 +1,9 @@
 {:paths ["src"]
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
-        org.clojure/data.json {:mvn/version "2.5.2"}}
+        org.clojure/data.json {:mvn/version "2.5.2"}
+        ;; 2.9: 2.8.1 on the JVM never notices a client that disconnects
+        ;; from an open event stream; Babashka's bundled http-kit does
+        http-kit/http-kit {:mvn/version "2.9.0-beta4"}}
  :aliases {:example {:extra-paths ["examples"]
                      :main-opts ["-m" "presa.example.hello"]}
            :test {:extra-paths ["test" "examples"]

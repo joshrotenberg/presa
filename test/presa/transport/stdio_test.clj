@@ -40,12 +40,11 @@
 
 (deftest framing-errors
   (let [srv (server/server {:name "t" :version "1"})
-        {:keys [responses log]} (run srv ["not json" "" "   " (line (rpc/request 1 "ping" {"_meta" meta-2026}))])]
+        {:keys [responses log]} (run srv ["not json" "" "   " (line (rpc/request 1 "server/discover" {"_meta" meta-2026}))])]
     (testing "a line that is not JSON gets a parse error, and blank lines are skipped"
-      (is (= [{"jsonrpc" "2.0" "id" nil "error" {"code" -32700 "message" "Parse error"}}
-              {"jsonrpc" "2.0" "id" 1 "result" {"resultType" "complete"
-                                                "_meta" {"io.modelcontextprotocol/serverInfo" {"name" "t" "version" "1"}}}}]
-             (sort-by #(some? (get % "id")) responses)))
+      (let [[parse-error discovered] (sort-by #(some? (get % "id")) responses)]
+        (is (= {"jsonrpc" "2.0" "id" nil "error" {"code" -32700 "message" "Parse error"}} parse-error))
+        (is (= ["2026-07-28"] (get-in discovered ["result" "supportedVersions"]))))
       (is (= 1 (count log))))))
 
 (deftest tool-calls-run-concurrently
@@ -71,3 +70,47 @@
     (is (= 1 (count responses)))
     (is (= "quiet" (get-in (first responses) ["result" "content" 0 "text"])))
     (is (= "noise\n" (str err)))))
+
+(deftest progress-and-cancellation
+  (testing "progress notifications go out while the request runs"
+    (let [srv (server/server {:name "t" :version "1"
+                              :tools [{:name "steps"
+                                       :handler (fn [_ ctx]
+                                                  (server/progress! ctx 1 {:total 2})
+                                                  (server/progress! ctx 2 {:total 2 :message "done"})
+                                                  "ok")}]})
+          {:keys [responses]} (run srv [(line (rpc/request 1 "tools/call" {"name" "steps" "_meta" (assoc meta-2026 "progressToken" "p")}))])]
+      (is (= [{"jsonrpc" "2.0" "method" "notifications/progress" "params" {"progressToken" "p" "progress" 1 "total" 2}}
+              {"jsonrpc" "2.0" "method" "notifications/progress" "params" {"progressToken" "p" "progress" 2 "total" 2 "message" "done"}}]
+             (take 2 responses)))
+      (is (= "ok" (get-in (nth responses 2) ["result" "content" 0 "text"])))))
+  (testing "no progressToken, no notifications"
+    (let [srv (server/server {:name "t" :version "1"
+                              :tools [{:name "steps" :handler (fn [_ ctx] (server/progress! ctx 1) "ok")}]})
+          {:keys [responses]} (run srv [(line (rpc/request 1 "tools/call" {"name" "steps" "_meta" meta-2026}))])]
+      (is (= 1 (count responses)))))
+  (testing "a cancelled request is interrupted and gets no response"
+    (let [started (promise)
+          interrupted (promise)
+          srv (server/server {:name "t" :version "1"
+                              :tools [{:name "block"
+                                       :handler (fn [_ _]
+                                                  (deliver started true)
+                                                  (try (Thread/sleep 5000) "finished"
+                                                       (catch InterruptedException _
+                                                         (deliver interrupted true)
+                                                         "interrupted")))}]})
+          pipe-in (java.io.PipedInputStream.)
+          pipe-out (java.io.PipedOutputStream. pipe-in)
+          in (java.io.OutputStreamWriter. pipe-out "UTF-8")
+          reader (java.io.InputStreamReader. pipe-in "UTF-8")
+          out (java.io.StringWriter.)
+          done (future (stdio/serve! srv {:in reader :out out :log (fn [& _])}) :done)]
+      (.write in (str (rpc/write-line (rpc/request 7 "tools/call" {"name" "block" "_meta" meta-2026}))))
+      (.flush in)
+      (is (deref started 2000 false))
+      (.write in (str (rpc/write-line (rpc/notification "notifications/cancelled" {"requestId" 7 "reason" "user"}))))
+      (.close in)
+      (is (deref interrupted 2000 false))
+      (is (= :done (deref done 2000 :timeout)))
+      (is (= "" (str out))))))
