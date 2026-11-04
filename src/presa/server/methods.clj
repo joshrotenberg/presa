@@ -2,6 +2,7 @@
   "Internal to presa.server; not part of the API. The methods for tools,
   resources, prompts, completion and discovery."
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
             [presa.content :as content]
             [presa.protocol :as protocol]
             [presa.schema :as schema]
@@ -82,6 +83,12 @@
               (filter #(permitted? srv context :tool (:name %)))
               (map wire-tool))))
 
+(defn keywordize-args?
+  "Whether tool's handler gets keyword argument keys: the tool's
+  :keywordize-args? when it has one, else the server's."
+  [srv tool]
+  (if (contains? tool :keywordize-args?) (boolean (:keywordize-args? tool)) (boolean (:keywordize-args? srv))))
+
 (defn tools-call [srv params context]
   (let [tool-name (required-name params "name" "tools/call")
         arguments (arguments-map params "arguments" "tools/call")
@@ -97,20 +104,22 @@
     (if-let [invalid (and (:validate? srv) (:input-schema tool)
                           ((:validator srv) arguments (:input-schema tool)))]
       (tool-error (str "Invalid arguments " (schema/describe invalid)))
-      (if (and declared? (#{:optional :required} policy))
-        (start-task! srv tool arguments context)
-      (let [v (try
-                (run-handler context #((:handler tool) arguments %))
-                (catch Exception e
-                  (if (:presa/error (ex-data e))
-                    (throw e)
-                    (do (emit! srv {:event :tool/error :tool tool-name :request-id (:request-id context)
-                                    :exception e})
-                        (tool-error (or (ex-message e) (str (class e))))))))
-            result (if (input-required? v) v (tool-result v))]
-        (when-not (input-required? result)
-          (check-output! srv tool result))
-        result)))))
+      ;; validated as sent; the handler (and a task's) sees them converted
+      (let [arguments (if (keywordize-args? srv tool) (walk/keywordize-keys arguments) arguments)]
+        (if (and declared? (#{:optional :required} policy))
+          (start-task! srv tool arguments context)
+          (let [v (try
+                    (run-handler context #((:handler tool) arguments %))
+                    (catch Exception e
+                      (if (:presa/error (ex-data e))
+                        (throw e)
+                        (do (emit! srv {:event :tool/error :tool tool-name :request-id (:request-id context)
+                                        :exception e})
+                            (tool-error (or (ex-message e) (str (class e))))))))
+                result (if (input-required? v) v (tool-result v))]
+            (when-not (input-required? result)
+              (check-output! srv tool result))
+            result))))))
 
 (defn resources-list [srv params context]
   (paged srv "resources/list" params "resources"

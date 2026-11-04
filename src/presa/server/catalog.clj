@@ -32,6 +32,22 @@
                       {:kind :invalid-input :values (vec ks)})))
     [(into {} (map (juxt k identity)) defs) (vec ks)]))
 
+(defn- json-name [k]
+  (if (keyword? k)
+    (if-let [ns (namespace k)] (str ns "/" (name k)) (name k))
+    k))
+
+(defn json-schema
+  "A schema written with keyword keys or values as JSON Schema with string
+  keys: :type :object becomes \"type\" \"object\", :a/b becomes \"a/b\".
+  Strings, numbers and booleans are left alone."
+  [v]
+  (cond
+    (map? v) (into {} (map (fn [[k x]] [(json-name k) (json-schema x)])) v)
+    (sequential? v) (mapv json-schema v)
+    (keyword? v) (json-name v)
+    :else v))
+
 (defn tool-def [tool]
   (check-name "tool" tool :name)
   (check-handler "tool" tool (:name tool))
@@ -39,7 +55,9 @@
     (when-not (or (#{:sync :optional :required} p) (fn? p))
       (throw (ex-info (str "The tool " (:name tool) " :task must be :sync, :optional, :required or a function")
                       {:kind :invalid-input :tool (:name tool)}))))
-  tool)
+  (cond-> tool
+    (contains? tool :input-schema) (update :input-schema json-schema)
+    (contains? tool :output-schema) (update :output-schema json-schema)))
 
 (defn resource-def [resource]
   (check-name "resource" resource :uri)
