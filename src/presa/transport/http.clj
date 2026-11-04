@@ -779,6 +779,12 @@
                    ;; connection) cancels the request
                    (do (swap! streams dissoc (get-in message ["params" "requestId"]))
                        (try (.close body) (catch Exception _)))
+                 ;; Each message is posted on its own thread. The promise a
+                 ;; later request waits on is made here, in send order, so a
+                 ;; request sent just after initialized cannot be posted
+                 ;; before the session stream opens.
+                 (let [ready (when (= "notifications/initialized" (get message "method"))
+                               (let [p (promise)] (swap! state assoc :stream-ready p) p))]
                  (future
                    (try (when (and (= "tools/call" (get message "method"))
                                    (not (contains? @annotations (get-in message ["params" "name"]))))
@@ -789,16 +795,16 @@
                                               (:stream-ready @state))]
                           (deref ready 2000 nil))
                         (post message)
-                        (when (and (= "notifications/initialized" (get message "method"))
-                                   (:session-id @state))
-                          (let [ready (promise)]
-                            (swap! state assoc :stream-ready ready)
-                            (session-stream! ready)))
+                        (when ready
+                          (if (:session-id @state)
+                            (session-stream! ready)
+                            (deliver ready true)))
                         (catch Throwable e
                           (log "HTTP request failed: " (.getName (class e)) ": " (ex-message e)
                                (when-let [c (ex-cause e)] (str " (" (.getName (class c)) ": " (ex-message c) ")")))
+                          (some-> ready (deliver true))
                           (when-let [id (get message "id")]
-                            (on-message (rpc/error id -32000 (str "HTTP request failed: " (ex-message e))))))))))
+                            (on-message (rpc/error id -32000 (str "HTTP request failed: " (ex-message e)))))))))))
         :close! (fn []
                   (when (compare-and-set! closed false true)
                     (when-let [^java.io.InputStream s (:session-stream @state)]
