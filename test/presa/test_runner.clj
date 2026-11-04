@@ -13,6 +13,7 @@
             [presa.jsonrpc-test]
             [presa.limits-test]
             [presa.protocol-test]
+            [presa.proxy-test]
             [presa.schema-test]
             [presa.server-surface-test]
             [presa.server-test]
@@ -38,6 +39,7 @@
     presa.limits-test
     presa.auth-test
     presa.tasks-test
+    presa.proxy-test
     presa.example.hello-test
     presa.guides-test])
 

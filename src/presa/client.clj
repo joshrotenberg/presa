@@ -135,7 +135,14 @@
     (when token (swap! (:progress client) assoc token on-progress))
     (try
       ((:send! @(:conn client)) (rpc/request id method params))
-      (let [response (deref p timeout-ms ::timeout)]
+      (let [response (try (deref p timeout-ms ::timeout)
+                          (catch InterruptedException e
+                            ;; the caller was cancelled: so is the request
+                            (swap! (:pending client) dissoc id)
+                            (try ((:send! @(:conn client))
+                                  (rpc/notification "notifications/cancelled" {"requestId" id "reason" "interrupted"}))
+                                 (catch Exception _))
+                            (throw e)))]
         (cond
           (= ::timeout response)
           (do (swap! (:pending client) dissoc id)
@@ -176,7 +183,7 @@
         (contains? response "error")
         (throw (protocol-error (get response "error")))
 
-        (and (map? result) (= "input_required" (get result "resultType")))
+        (and (map? result) (= "input_required" (get result "resultType")) (not= :return (:input opts)))
         (do (when (> round max-input-rounds)
               (throw (ex-info (str method " asked for input more than " max-input-rounds " times")
                               {:kind :protocol :method method})))
@@ -249,6 +256,8 @@
                   (default the client's :log-level)
   - :meta         more _meta entries
   - :no-cache     true to ask the server even when the cache holds a result
+  - :input        :return to hand an input_required result back instead of
+                  answering it with :handlers (a proxy passes it on)
 
   With :cache on the client, 2026-07-28 discover, list and read results
   are kept for their ttlMs and served from memory until then, and list

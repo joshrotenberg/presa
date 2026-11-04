@@ -54,6 +54,7 @@ gives the sha.
 | `presa.schema` | JSON Schema subset validation for tool arguments and output |
 | `presa.schema.networknt` | full JSON Schema 2020-12 validation (JVM only, optional dependency) |
 | `presa.transport.http` | Streamable HTTP: a server over http-kit, a client over `java.net.http` |
+| `presa.proxy` | one server in front of several MCP servers |
 | `presa.tasks` | the Tasks extension's task store and wire shapes |
 | `presa.auth`, `presa.auth.jwt` | OAuth 2.1 resource server: metadata, bearer challenges, JWT verification (RS256, ES256, HS256, JWKS) |
 
