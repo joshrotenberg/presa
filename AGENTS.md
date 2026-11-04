@@ -31,8 +31,10 @@ conformance lanes (`bb conformance <revision>`, each against
 
 The check enforces these:
 
-- Commit subjects in `origin/main..HEAD` use conventional-commit prefixes (`feat:`,
-  `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).
+- Commit subjects in `origin/main..HEAD` use conventional-commit prefixes: `feat`,
+  `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`,
+  `revert`, with an optional scope and `!` (git's own `Revert "..."` subject
+  also passes). Merge commits are not checked.
 - Commit messages have no Co-Authored-By, Assisted-By or Generated-By
   trailers and no "Generated with" lines.
 - Tracked `*.md` `*.clj` `*.edn` `*.json` files have no em dashes.
