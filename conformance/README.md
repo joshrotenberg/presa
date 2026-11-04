@@ -85,3 +85,15 @@ would; see its namespace docstring.
 
 The `auth/*` scenarios fail: presa.client has no OAuth flows yet
 (joshrotenberg/presa#8). The baselines record them.
+
+## Wire schema
+
+`schema/2026-07-28/` vendors the official 2026-07-28 JSON schema with its
+license and provenance (modelcontextprotocol commit `5f5440bb`, sha256 in
+`provenance.json`). `test-jvm/presa/wire_schema_test.clj` drives the
+fixture through `presa.client` over a recording transport and validates
+every message, both directions, against the definition for its method
+(`ListToolsResultResponse`, `CallToolRequest`, `ProgressNotification` and
+so on), with negative controls that must fail. It runs with `bb jvm-test`,
+so CI runs it on every pull request. Tasks results are checked only as
+generic results, since the core schema does not define them.
