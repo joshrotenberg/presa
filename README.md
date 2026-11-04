@@ -95,6 +95,7 @@ gives the sha.
 | [The proxy](docs/guides/proxy.md) | one server in front of several, what it forwards, input from initialize-era backends |
 | [Initialize-era clients](docs/guides/initialize-era.md) | serving 2025-11-25 and 2025-06-18, and what differs |
 | [Logging, progress and instrumentation](docs/guides/observability.md) | `log!`, `progress!`, `:on-event` |
+| [A complete example](docs/guides/example.md) | the notebook server, its REPL walkthrough and client, from a host |
 
 Every code block in the guides runs as part of the test suite.
 
@@ -111,7 +112,7 @@ runner against a fixture server and a client harness. All 37 required
 2025-11-25 and 2025-06-18 server suites, and every scored client scenario,
 the 25 authorization ones included.
 
-## The example server
+## The example servers
 
 [`examples/presa/example/hello.clj`](examples/presa/example/hello.clj) has two
 tools, `echo` and `add`, and serves every revision presa knows:
@@ -120,6 +121,20 @@ tools, `echo` and `add`, and serves every revision presa knows:
 bb --config /path/to/presa/bb.edn -m presa.example.hello   # or, from the repository, clojure -M:example
 claude mcp add presa-hello -- bb --config /path/to/presa/bb.edn -m presa.example.hello
 codex mcp add presa-hello -- bb --config /path/to/presa/bb.edn -m presa.example.hello
+```
+
+[`examples/presa/example/notebook.clj`](examples/presa/example/notebook.clj) is
+a notebook that uses most of presa together: structured tools, elicitation,
+sampling, tasks, resources and a template, a prompt, completion,
+subscriptions, logging, both transports and OAuth. It comes with a REPL
+walkthrough and a command-line client; [the guide](docs/guides/example.md)
+goes through it.
+
+```sh
+bb --config /path/to/presa/bb.edn -m presa.example.notebook   # or clojure -M:notebook
+bb --config /path/to/presa/bb.edn -m presa.example.notebook-client
+claude mcp add notebook -- bb --config /path/to/presa/bb.edn -m presa.example.notebook
+codex mcp add notebook -- bb --config /path/to/presa/bb.edn -m presa.example.notebook
 ```
 
 ## Development

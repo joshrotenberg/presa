@@ -8,6 +8,8 @@
            :schema-full {:extra-deps {com.networknt/json-schema-validator {:mvn/version "3.0.0"}}}
            :example {:extra-paths ["examples"]
                      :main-opts ["-m" "presa.example.hello"]}
+           :notebook {:extra-paths ["examples"]
+                      :main-opts ["-m" "presa.example.notebook"]}
            :test {:extra-paths ["test" "test-jvm" "examples" "conformance"]
                   :extra-deps {com.networknt/json-schema-validator {:mvn/version "3.0.0"}}
                   :main-opts ["-m" "presa.test-runner"]}}}

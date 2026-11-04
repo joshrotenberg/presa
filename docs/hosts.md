@@ -131,3 +131,20 @@ Not checked: Claude Code's `initialize` fallback against presa itself (presa
 answers `server/discover` whenever it serves 2026-07-28), and a server that
 serves only initialize-era revisions, which answers Claude Code's
 `server/discover` probe with -32022 rather than -32601.
+
+## The notebook example in both hosts
+
+`examples/presa/example/notebook.clj`, run the same way on 2026-11-03 with
+the prompt "list the names of its tools, create a note titled 'Groceries'
+with body 'coffee and bread' tagged 'home', then search notes for 'coffee'":
+
+- Claude Code 2.1.317 (`claude -p --strict-mcp-config --mcp-config
+  notebook.json --allowedTools mcp__notebook__create_note
+  mcp__notebook__search_notes`) listed the six tools, created `n3`, and
+  the search returned `n1` (Shopping) and `n3` (Groceries).
+- Codex 0.165.0 (`codex exec -c 'mcp_servers.notebook.command="bb"' -c
+  'mcp_servers.notebook.args=[...]'`) did the same, with the same ids.
+
+Not checked from the hosts: elicitation, sampling, tasks and
+subscriptions, which the notebook's tests and walk-throughs cover with
+presa's client.
