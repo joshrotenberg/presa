@@ -64,17 +64,19 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 
 ## Backlog
 
-The open work is filed as issues, labelled by priority (`p1` to `p3`) and
-area: <https://github.com/joshrotenberg/presa/issues>.
+The first backlog (joshrotenberg/presa#5 to joshrotenberg/presa#22) is
+done: the client conformance leg, Tasks, the OAuth resource server and
+client, runtime catalogs, limits, the session event stream, client
+caching, full JSON Schema validation, initialize-era schema rules,
+notification checks, scoped cancellation, instrumentation, the proxy,
+the guides, the release process, lint prefixes and the wire schema check.
+
+Open work is filed as issues, labelled by priority and area:
+<https://github.com/joshrotenberg/presa/issues>. At the time of writing:
 
 | Issue | Priority |
 |---|---|
-| joshrotenberg/presa#5 client conformance leg and its CI lane | p1 |
-| joshrotenberg/presa#6 Tasks extension | p2 |
-| joshrotenberg/presa#7 OAuth 2.1 resource server | p2 |
-| joshrotenberg/presa#8 OAuth 2.1 client flows | p2 |
-| joshrotenberg/presa#9 changing a running server's catalog | p2 |
-| joshrotenberg/presa#10 limits on sizes, streams and notifications | p2 |
-| joshrotenberg/presa#19 guides beyond the README | p2 |
-| joshrotenberg/presa#20 release process | p2 |
-| joshrotenberg/presa#11 to #18, #21, #22 | p3 |
+| joshrotenberg/presa#42 DPoP for the OAuth client | p3 |
+| joshrotenberg/presa#43 workload identity and enterprise-managed authorization grants | p3 |
+| joshrotenberg/presa#44 task status notifications on subscriptions/listen | p3 |
+| joshrotenberg/presa#45 proxy log forwarding and initialize-era backend input | p3 |
