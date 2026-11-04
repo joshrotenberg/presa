@@ -436,9 +436,11 @@
         params (assoc {"notifications" notifications} "_meta" (request-meta client {}))]
     (swap! (:subscriptions client) assoc id
            (fn [message]
+             ;; the callback sees the acknowledgement before the promise
+             ;; says it came
+             (on-notification message)
              (when (= "notifications/subscriptions/acknowledged" (get message "method"))
-               (deliver acknowledged (get message "params")))
-             (on-notification message)))
+               (deliver acknowledged (get message "params")))))
     (swap! (:pending client) assoc id p)
     ((:send! @(:conn client)) (rpc/request id "subscriptions/listen" params))
     (future
