@@ -453,22 +453,30 @@
                    (get @annotations (get params "name")))))))
 
 (defn- read-events
-  "Call f with each message in an event stream."
+  "Call f with each message in an event stream, until it ends. Returns the
+  stream's last event id and retry interval: {:last-event-id :retry-ms}."
   [^java.io.InputStream in f]
   (with-open [r (io/reader in :encoding "UTF-8")]
-    (loop [data []]
-      (when-let [line (.readLine ^java.io.BufferedReader r)]
+    (loop [data [] seen {}]
+      (if-let [line (.readLine ^java.io.BufferedReader r)]
         (cond
           (str/blank? line)
           (do (when (seq data)
                 (when-let [m (try (rpc/parse-line (str/join "\n" data)) (catch Exception _ nil))]
                   (f m)))
-              (recur []))
+              (recur [] seen))
 
           (str/starts-with? line "data:")
-          (recur (conj data (str/triml (subs line 5))))
+          (recur (conj data (str/triml (subs line 5))) seen)
 
-          :else (recur data))))))
+          (str/starts-with? line "id:")
+          (recur data (assoc seen :last-event-id (str/trim (subs line 3))))
+
+          (str/starts-with? line "retry:")
+          (recur data (if-let [ms (parse-long (str/trim (subs line 6)))] (assoc seen :retry-ms ms) seen))
+
+          :else (recur data seen))
+        seen))))
 
 (def ^:private ^:dynamic *listing*
   "Bound while the transport lists tools for itself: receives the messages
@@ -492,7 +500,12 @@
            ;; open event streams by request id, closed to cancel the request
            streams (atom {})
            closed (atom false)
+           ;; ids of the responses delivered, to tell a stream that ended
+           ;; before its response from one that carried it
+           answered (atom #{})
            deliver! (fn [m]
+                      (when (#{:response :error} (rpc/kind m))
+                        (swap! answered conj (get m "id")))
                       (let [m (filter-tools m annotations log)]
                         (if *listing*
                           (*listing* m)
@@ -500,6 +513,44 @@
                             (when (and (= (get m "id") (:initialize-id @state)) (get-in m ["result" "protocolVersion"]))
                               (swap! state assoc :version (get-in m ["result" "protocolVersion"])))
                             (on-message m)))))
+           open-get (fn [last-event-id]
+                      ;; A GET event stream for an initialize-era session:
+                      ;; the session's own stream, or a resumed POST stream.
+                      (let [builder (-> (HttpRequest/newBuilder uri)
+                                        (.header "accept" "text/event-stream")
+                                        (.GET))]
+                        (when-let [sid (:session-id @state)] (.header builder "mcp-session-id" sid))
+                        (when-let [v (:version @state)] (.header builder "mcp-protocol-version" v))
+                        (when last-event-id (.header builder "last-event-id" last-event-id))
+                        (doseq [[k v] headers] (.header builder (str k) (str v)))
+                        (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))
+                              content-type (str/lower-case (.orElse (.firstValue (.headers resp) "content-type") ""))]
+                          (if (and (= 200 (.statusCode resp)) (str/starts-with? content-type "text/event-stream"))
+                            resp
+                            (do (.close ^java.io.InputStream (.body resp)) nil)))))
+           resume! (fn [id {:keys [last-event-id retry-ms]}]
+                     ;; The server ended a POST stream before the response:
+                     ;; reconnect with GET and Last-Event-ID, after retry-ms.
+                     (loop [seen {:last-event-id last-event-id :retry-ms retry-ms} attempts 0]
+                       (when (and (not @closed) (not (contains? @answered id)) (< attempts 5))
+                         (Thread/sleep (long (or (:retry-ms seen) 1000)))
+                         (when-let [^HttpResponse resp (open-get (:last-event-id seen))]
+                           (let [more (try (read-events (.body resp) deliver!) (catch java.io.IOException _ {}))]
+                             (recur (merge seen more) (inc attempts)))))))
+           session-stream! (fn []
+                             ;; The standalone stream an initialize-era server
+                             ;; uses for requests and notifications outside a
+                             ;; request; stops when the server has none (405).
+                             (future
+                               (loop [seen {}]
+                                 (when-not @closed
+                                   (when-let [^HttpResponse resp (try (open-get (:last-event-id seen)) (catch Exception _ nil))]
+                                     (swap! state assoc :session-stream (.body resp))
+                                     (let [more (try (read-events (.body resp) deliver!) (catch java.io.IOException _ {}))
+                                           seen (merge seen more)]
+                                       (when-not @closed
+                                         (Thread/sleep (long (or (:retry-ms seen) 1000)))
+                                         (recur seen))))))))
            post (fn [message]
                   (let [builder (HttpRequest/newBuilder uri)]
                     (doseq [[k v] (merge (request-headers message state annotations) headers)]
@@ -513,12 +564,16 @@
                         (swap! state assoc :session-id sid))
                       (cond
                         (str/starts-with? content-type "text/event-stream")
-                        (let [body (.body resp)]
-                          (when (some? id) (swap! streams update id assoc :body body))
-                          (try (read-events body deliver!)
-                               (catch java.io.IOException e
-                                 (when-not (contains? @streams id) (throw e)))
-                               (finally (when (some? id) (swap! streams dissoc id)))))
+                        (let [body (.body resp)
+                              _ (when (some? id) (swap! streams update id assoc :body body))
+                              seen (try (read-events body deliver!)
+                                        (catch java.io.IOException e
+                                          (when-not (contains? @streams id) (throw e))
+                                          ::cancelled)
+                                        (finally (when (some? id) (swap! streams dissoc id))))]
+                          (when (and (some? id) (map? seen) (:session-id @state)
+                                     (not (contains? @answered id)))
+                            (resume! id seen)))
 
                         (str/starts-with? content-type "application/json")
                         (let [body (slurp (.body resp) :encoding "UTF-8")
@@ -565,12 +620,18 @@
                                    (not (contains? @annotations (get-in message ["params" "name"]))))
                           (try (list-tools! message) (catch Exception _)))
                         (post message)
+                        (when (and (= "notifications/initialized" (get message "method"))
+                                   (:session-id @state))
+                          (session-stream!))
                         (catch Throwable e
-                          (log "HTTP request failed: " (ex-message e))
+                          (log "HTTP request failed: " (.getName (class e)) ": " (ex-message e)
+                               (when-let [c (ex-cause e)] (str " (" (.getName (class c)) ": " (ex-message c) ")")))
                           (when-let [id (get message "id")]
                             (on-message (rpc/error id -32000 (str "HTTP request failed: " (ex-message e))))))))))
         :close! (fn []
                   (when (compare-and-set! closed false true)
+                    (when-let [^java.io.InputStream s (:session-stream @state)]
+                      (try (.close s) (catch Exception _)))
                     (when-let [sid (:session-id @state)]
                       (try
                         (.send client (-> (HttpRequest/newBuilder uri)

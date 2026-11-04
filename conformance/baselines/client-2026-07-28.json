@@ -1,0 +1,253 @@
+{
+  "revision" : "2026-07-28",
+  "runner" : "0.2.0-alpha.12",
+  "checkInventory" : {
+    "auth/authorization-server-migration" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2352-no-cross-as-credential-reuse" : [ "SUCCESS" ],
+      "sep-2352-no-reuse-on-as-change" : [ "SUCCESS" ],
+      "sep-2352-reregister-on-as-change" : [ "FAILURE" ]
+    },
+    "auth/basic-cimd" : {
+      "cimd-client-id-used" : [ "FAILURE" ],
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ]
+    },
+    "auth/client-credentials-basic" : {
+      "client-credentials-basic-auth" : [ "FAILURE" ],
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ]
+    },
+    "auth/client-credentials-jwt" : {
+      "client-credentials-jwt-verified" : [ "FAILURE" ],
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ]
+    },
+    "auth/dpop" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-1932-client-dpop-auth-scheme" : [ "FAILURE" ],
+      "sep-1932-client-fresh-proof" : [ "FAILURE" ],
+      "sep-1932-client-token-request-proof" : [ "FAILURE" ]
+    },
+    "auth/dpop-nonce" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-1932-client-as-nonce" : [ "FAILURE" ],
+      "sep-1932-client-dpop-auth-scheme" : [ "FAILURE" ],
+      "sep-1932-client-fresh-proof" : [ "FAILURE" ],
+      "sep-1932-client-rs-nonce" : [ "FAILURE" ],
+      "sep-1932-client-token-request-proof" : [ "FAILURE" ]
+    },
+    "auth/enterprise-managed-authorization" : {
+      "complete-flow-jwt-bearer" : [ "FAILURE" ],
+      "complete-flow-token-exchange" : [ "FAILURE" ],
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ]
+    },
+    "auth/iss-normalized" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2468-client-no-normalization" : [ "FAILURE" ]
+    },
+    "auth/iss-not-advertised" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2468-client-proceed-no-iss" : [ "FAILURE" ]
+    },
+    "auth/iss-supported" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2468-client-compare-iss-supported" : [ "FAILURE" ]
+    },
+    "auth/iss-supported-missing" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2468-client-reject-missing-iss" : [ "FAILURE" ]
+    },
+    "auth/iss-unexpected" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2468-client-compare-iss-unadvertised" : [ "FAILURE" ]
+    },
+    "auth/iss-wrong-issuer" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2468-client-compare-iss-supported" : [ "FAILURE" ]
+    },
+    "auth/metadata-default" : {
+      "authorization-request" : [ "FAILURE" ],
+      "authorization-server-metadata" : [ "FAILURE" ],
+      "client-registration" : [ "FAILURE" ],
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "prm-pathbased-requested" : [ "FAILURE" ],
+      "resource-parameter-in-authorization" : [ "FAILURE" ],
+      "resource-parameter-in-token" : [ "FAILURE" ],
+      "token-request" : [ "FAILURE" ]
+    },
+    "auth/metadata-issuer-mismatch" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2468-client-validate-metadata-issuer" : [ "FAILURE" ]
+    },
+    "auth/metadata-var1" : {
+      "authorization-request" : [ "FAILURE" ],
+      "authorization-server-metadata" : [ "FAILURE" ],
+      "client-registration" : [ "FAILURE" ],
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "prm-pathbased-requested" : [ "FAILURE" ],
+      "resource-parameter-in-authorization" : [ "FAILURE" ],
+      "resource-parameter-in-token" : [ "FAILURE" ],
+      "token-request" : [ "FAILURE" ]
+    },
+    "auth/metadata-var2" : {
+      "authorization-request" : [ "FAILURE" ],
+      "authorization-server-metadata" : [ "FAILURE" ],
+      "client-registration" : [ "FAILURE" ],
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "resource-parameter-in-authorization" : [ "FAILURE" ],
+      "resource-parameter-in-token" : [ "FAILURE" ],
+      "token-request" : [ "FAILURE" ]
+    },
+    "auth/metadata-var3" : {
+      "authorization-request" : [ "FAILURE" ],
+      "authorization-server-metadata" : [ "FAILURE" ],
+      "client-registration" : [ "FAILURE" ],
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "resource-parameter-in-authorization" : [ "FAILURE" ],
+      "resource-parameter-in-token" : [ "FAILURE" ],
+      "token-request" : [ "FAILURE" ]
+    },
+    "auth/offline-access-not-supported" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2207-offline-access-not-requested" : [ "FAILURE" ]
+    },
+    "auth/offline-access-scope" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "sep-2207-client-metadata-grant-types" : [ "INFO" ],
+      "sep-2207-offline-access-requested" : [ "FAILURE" ]
+    },
+    "auth/pre-registration" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "pre-registration-auth" : [ "FAILURE" ]
+    },
+    "auth/resource-mismatch" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "resource-mismatch-rejected" : [ "FAILURE" ]
+    },
+    "auth/scope-from-scopes-supported" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "scope-from-scopes-supported" : [ "FAILURE" ]
+    },
+    "auth/scope-from-www-authenticate" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "scope-from-www-authenticate" : [ "FAILURE" ]
+    },
+    "auth/scope-omitted-when-undefined" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "scope-omitted-when-undefined" : [ "FAILURE" ]
+    },
+    "auth/scope-retry-limit" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "scope-retry-limit" : [ "FAILURE" ]
+    },
+    "auth/scope-step-up" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "scope-step-up-escalation" : [ "FAILURE" ],
+      "scope-step-up-initial" : [ "FAILURE" ],
+      "sep-2350-scope-union-on-reauth" : [ "FAILURE" ]
+    },
+    "auth/token-endpoint-auth-basic" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "resource-parameter-in-authorization" : [ "FAILURE" ],
+      "resource-parameter-in-token" : [ "FAILURE" ],
+      "token-endpoint-auth-method" : [ "FAILURE" ]
+    },
+    "auth/token-endpoint-auth-none" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "resource-parameter-in-authorization" : [ "FAILURE" ],
+      "resource-parameter-in-token" : [ "FAILURE" ],
+      "token-endpoint-auth-method" : [ "FAILURE" ]
+    },
+    "auth/token-endpoint-auth-post" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "resource-parameter-in-authorization" : [ "FAILURE" ],
+      "resource-parameter-in-token" : [ "FAILURE" ],
+      "token-endpoint-auth-method" : [ "FAILURE" ]
+    },
+    "auth/wif-jwt-bearer" : {
+      "incoming-request" : [ "INFO" ],
+      "outgoing-response" : [ "INFO" ],
+      "wif-assertion-verified" : [ "FAILURE" ]
+    },
+    "http-custom-headers" : {
+      "sep-2243-client-base64-unsafe" : [ "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS" ],
+      "sep-2243-client-encode-values" : [ "SUCCESS", "SUCCESS", "SUCCESS" ],
+      "sep-2243-client-mirrors-designated-params" : [ "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS" ],
+      "sep-2243-client-omit-null" : [ "SUCCESS" ],
+      "sep-2243-client-supports-custom-headers" : [ "SUCCESS" ]
+    },
+    "http-invalid-tool-headers" : {
+      "sep-2243-client-reject-invalid-tool" : [ "SUCCESS" ],
+      "sep-2243-x-mcp-header-charset" : [ "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS" ],
+      "sep-2243-x-mcp-header-not-empty" : [ "SUCCESS" ],
+      "sep-2243-x-mcp-header-primitive-only" : [ "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS" ],
+      "sep-2243-x-mcp-header-unique" : [ "SUCCESS", "SUCCESS" ]
+    },
+    "http-standard-headers" : {
+      "sep-2243-client-includes-standard-headers" : [ "SKIPPED", "SKIPPED", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS" ]
+    },
+    "json-schema-2020-12-preservation" : {
+      "json-schema-2020-12-client-$defs-preserved" : [ "SUCCESS" ],
+      "json-schema-2020-12-client-$schema-preserved" : [ "SUCCESS" ],
+      "json-schema-2020-12-client-additionalProperties-preserved" : [ "SUCCESS" ],
+      "json-schema-2020-12-client-echo-completed" : [ "SUCCESS" ],
+      "json-schema-2020-12-client-tool-found" : [ "SUCCESS" ],
+      "sep-2106-client-anchor-keyword-preserved" : [ "SUCCESS" ],
+      "sep-2106-client-composition-keywords-preserved" : [ "SUCCESS" ],
+      "sep-2106-client-conditional-keywords-preserved" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "json-schema-ref-no-deref" : {
+      "sep-2106-no-network-ref-deref" : [ "SUCCESS" ]
+    },
+    "request-metadata" : {
+      "sep-2575-client-declares-elicitation-capability" : [ "SUCCESS" ],
+      "sep-2575-client-declares-roots-capability" : [ "SUCCESS" ],
+      "sep-2575-client-declares-sampling-capability" : [ "SUCCESS" ],
+      "sep-2575-client-populates-meta" : [ "SUCCESS" ],
+      "sep-2575-client-retry-supported-version" : [ "SUCCESS" ],
+      "sep-2575-client-sends-client-info" : [ "SUCCESS" ],
+      "sep-2575-http-client-sends-version-header" : [ "SUCCESS" ],
+      "sep-2575-http-version-header-matches-meta" : [ "SUCCESS" ]
+    },
+    "sep-2322-client-request-state" : {
+      "sep-2322-client-jsonrpc-id-different" : [ "SUCCESS" ],
+      "sep-2322-client-no-state-omitted" : [ "SUCCESS" ],
+      "sep-2322-client-parallel-isolation" : [ "SUCCESS" ],
+      "sep-2322-client-request-state-echoed" : [ "SUCCESS" ],
+      "sep-2322-default-result-type-complete" : [ "SUCCESS" ]
+    },
+    "tools_call" : {
+      "tool-add-numbers" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    }
+  }
+}
