@@ -43,7 +43,8 @@
 
 (def jvm-namespaces
   "Tests of namespaces that load only on the JVM (test-jvm/)."
-  '[presa.schema.networknt-test])
+  '[presa.schema.networknt-test
+    presa.wire-schema-test])
 
 (defn -main [& _]
   (let [jvm? (nil? (System/getProperty "babashka.version"))

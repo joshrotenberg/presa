@@ -1,7 +1,8 @@
 ;; The repository conventions AGENTS.md lists, as cj run check checks them,
 ;; for CI and anyone without cj:
 ;;
-;; - tracked *.md *.clj *.edn *.json files have no em dashes
+;; - tracked *.md *.clj *.edn *.json files have no em dashes (vendored
+;;   files under conformance/schema/ aside)
 ;; - commit subjects in <base>..HEAD (merge commits aside) use
 ;;   conventional-commit prefixes
 ;; - commit messages have no Co-Authored-By, Assisted-By or Generated-By
@@ -16,7 +17,8 @@
 (def em-dash (str (char 0x2014)))
 
 (def dash-problems
-  (for [file (str/split-lines (git "ls-files" "*.md" "*.clj" "*.edn" "*.json"))
+  ;; conformance/schema/ holds vendored files, pinned by hash
+  (for [file (str/split-lines (git "ls-files" "*.md" "*.clj" "*.edn" "*.json" ":(exclude)conformance/schema/**"))
         :when (seq file)
         [n line] (map-indexed vector (str/split-lines (slurp file)))
         :when (str/includes? line em-dash)]

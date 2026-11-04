@@ -8,7 +8,8 @@
 
   - :test       bb test
   - :jvm-test   bb jvm-test
-  - :em-dashes  no em dashes in tracked *.md *.clj *.edn *.json files
+  - :em-dashes  no em dashes in tracked *.md *.clj *.edn *.json files, except
+                 the vendored conformance/schema/
   - :commits    commits in origin/main..HEAD have conventional-commit subjects and no attribution lines (skipped when origin/main does not exist)
 
   Every step runs even when an earlier one fails. Returns
@@ -21,7 +22,8 @@
   [root]
   [[:test #(checks/command root ["bb" "test"] {:failures checks/clojure-test-failures})]
    [:jvm-test #(checks/command root ["bb" "jvm-test"] {:failures checks/clojure-test-failures})]
-   [:em-dashes #(checks/em-dashes root {:pathspecs ["*.md" "*.clj" "*.edn" "*.json"]})]
+   [:em-dashes #(checks/em-dashes root {:pathspecs ["*.md" "*.clj" "*.edn" "*.json"
+                                                    ":(exclude)conformance/schema/**"]})]
    [:commits #(checks/commit-messages root {:base "origin/main"})]])
 
 (defn -main [& _]
