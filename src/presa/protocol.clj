@@ -7,7 +7,7 @@
   "2026-07-28")
 
 (def legacy-versions
-  "Initialize-era revisions presa plans to serve as an opt-in, newest first."
+  "Initialize-era revisions presa serves as an opt-in, newest first."
   ["2025-11-25" "2025-06-18"])
 
 (def versions
@@ -26,9 +26,17 @@
   (= latest-version version))
 
 (def error-codes
-  "The JSON-RPC 2.0 error codes, by name."
+  "The JSON-RPC 2.0 error codes, and the MCP ones presa uses, by name."
   {:parse-error -32700
    :invalid-request -32600
    :method-not-found -32601
    :invalid-params -32602
-   :internal-error -32603})
+   :internal-error -32603
+   :unsupported-protocol-version -32022})
+
+(def meta-keys
+  "The request and result _meta keys of the stateless revision."
+  {:protocol-version "io.modelcontextprotocol/protocolVersion"
+   :client-info "io.modelcontextprotocol/clientInfo"
+   :client-capabilities "io.modelcontextprotocol/clientCapabilities"
+   :server-info "io.modelcontextprotocol/serverInfo"})
