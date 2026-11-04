@@ -8,6 +8,7 @@
             [presa.client-test]
             [presa.content-test]
             [presa.example.hello-test]
+            [presa.guides-test]
             [presa.input-test]
             [presa.jsonrpc-test]
             [presa.limits-test]
@@ -37,7 +38,8 @@
     presa.limits-test
     presa.auth-test
     presa.tasks-test
-    presa.example.hello-test])
+    presa.example.hello-test
+    presa.guides-test])
 
 (defn -main [& _]
   (let [{:keys [fail error]} (apply test/run-tests namespaces)]
