@@ -159,3 +159,35 @@
       (try
         (is (true? (get (client/call-tool c "roots") "isError")))
         (finally (client/close c))))))
+
+(deftest per-request-functions
+  (let [srv (server/server
+             {:name "t" :version "1" :versions protocol/versions :logging true
+              :tools [{:name "noisy" :handler (fn [_ ctx] (server/log! ctx "info" "about this call") "ok")}
+                      {:name "ask"
+                       :handler (fn [_ ctx]
+                                  (get-in (server/client-request! ctx "roots/list" {}) ["roots" 0 "name"]))}]})
+        client-logs (atom [])
+        roots (fn [n] (fn [_] {"roots" [{"uri" "file:///w" "name" n}]}))]
+    (doseq [version ["2026-07-28" "2025-11-25"]]
+      (testing version
+        (let [c (client/connect (client/in-process srv)
+                                {:versions [version] :log-level "info" :on-log #(swap! client-logs conj %)
+                                 :capabilities {"roots" {}} :handlers {"roots/list" (roots "client")}})]
+          (when (= "2025-11-25" version) (client/set-log-level c "info"))
+          (try
+            (reset! client-logs [])
+            (testing ":on-log takes the request's log messages in place of the client's"
+              (let [mine (atom [])]
+                (client/request c "tools/call" {"name" "noisy" "arguments" {}} {:on-log #(swap! mine conj (get % "data"))})
+                (is (= ["about this call"] @mine))
+                (is (= [] @client-logs))))
+            (testing "without it, the client's :on-log has them"
+              (client/call-tool c "noisy")
+              (is (= ["about this call"] (map #(get % "data") @client-logs))))
+            (when (= "2025-11-25" version)
+              (testing ":handlers answer the server's requests for this request"
+                (is (= "mine" (client/text (client/request c "tools/call" {"name" "ask" "arguments" {}}
+                                                           {:handlers {"roots/list" (roots "mine")}}))))
+                (is (= "client" (client/text (client/call-tool c "ask"))))))
+            (finally (client/close c))))))))

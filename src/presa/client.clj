@@ -29,7 +29,7 @@
   [srv]
   (fn [{:keys [on-message on-close]}]
     (let [wire (fn [m] (rpc/parse-line (rpc/write-line m)))
-          conn (connection/open srv {:send #(on-message (wire %))})
+          conn (connection/open srv {:send #(on-message (with-meta (wire %) (meta %)))})
           closed (atom false)]
       {:send! (fn [message]
                 (when @closed
@@ -58,6 +58,13 @@
 
 (declare invalidate!)
 
+(defn- related
+  "What a request a message was sent for registered, when the transport
+  could tell which request that was (see `request`)."
+  [client message]
+  (when-let [id (:presa/related-request (meta message))]
+    (get @(:in-flight client) id)))
+
 (defn- route-notification [client {:strs [method params] :as message}]
   (invalidate! client message)
   (when-let [f (get @(:subscriptions client)
@@ -70,7 +77,9 @@
         (f params))
 
       "notifications/message"
-      (when on-log (on-log params))
+      (if-let [f (:on-log (related client message))]
+        (f params)
+        (when on-log (on-log params)))
 
       nil)
     (when on-notification (on-notification message))))
@@ -78,9 +87,10 @@
 (defn- answer-server-request
   "Answer a request the server sent (initialize-era servers ask clients for
   roots, sampling and elicitation this way)."
-  [client {:strs [id method params]}]
+  [client {:strs [id method params] :as message}]
   (future
-    (let [f (get-in client [:opts :handlers method])
+    (let [f (or (get-in (related client message) [:handlers method])
+                (get-in client [:opts :handlers method]))
           response (if f
                      (try (rpc/result id (f params))
                           (catch Exception e
@@ -120,7 +130,7 @@
 
 (defn- send-request
   "Send method with params as a request and wait for its response map."
-  [client method params {:keys [timeout-ms on-progress meta] :as opts}]
+  [client method params {:keys [timeout-ms on-progress on-log handlers meta] :as opts}]
   (when @(:closed client)
     (throw (ex-info "The connection is closed" {:kind :closed})))
   (let [id (swap! (:next-id client) inc)
@@ -133,6 +143,8 @@
         timeout-ms (or timeout-ms (get-in client [:opts :timeout-ms]) default-timeout-ms)]
     (swap! (:pending client) assoc id p)
     (when token (swap! (:progress client) assoc token on-progress))
+    (when (or on-log handlers)
+      (swap! (:in-flight client) assoc id {:on-log on-log :handlers handlers}))
     (try
       ((:send! @(:conn client)) (rpc/request id method params))
       (let [response (try (deref p timeout-ms ::timeout)
@@ -157,6 +169,7 @@
 
           :else response))
       (finally
+        (swap! (:in-flight client) dissoc id)
         (when token (swap! (:progress client) dissoc token))))))
 
 (def ^:private max-input-rounds 10)
@@ -164,10 +177,11 @@
 (defn- answer-inputs
   "Answers to a 2026-07-28 input_required result's inputRequests, from the
   client's :handlers."
-  [client requests]
+  [client requests opts]
   (into {}
         (map (fn [[id {:strs [method params]}]]
-               (let [f (or (get-in client [:opts :handlers method])
+               (let [f (or (get-in opts [:handlers method])
+                           (get-in client [:opts :handlers method])
                            (throw (ex-info (str "The server asked for " method " and the client has no handler for it")
                                            {:kind :unsupported :method method})))]
                  [id (f params)])))
@@ -188,7 +202,7 @@
               (throw (ex-info (str method " asked for input more than " max-input-rounds " times")
                               {:kind :protocol :method method})))
             (recur (cond-> (assoc (dissoc (or params {}) "requestState" "_meta")
-                                  "inputResponses" (answer-inputs client (get result "inputRequests")))
+                                  "inputResponses" (answer-inputs client (get result "inputRequests") opts))
                      (contains? result "requestState") (assoc "requestState" (get result "requestState")))
                    (inc round)))
 
@@ -254,6 +268,18 @@
   - :on-progress  (fn [params]) for notifications/progress about this request
   - :log-level    the least severe log level to receive, on 2026-07-28
                   (default the client's :log-level)
+  - :on-log       (fn [params]) for notifications/message about this request,
+                  in place of the client's :on-log
+  - :handlers     {method (fn [params])} for what the server asks for while
+                  this request runs, over the client's :handlers: input
+                  requests in input_required results, and requests from an
+                  initialize-era server
+
+  :on-log and requests from initialize-era servers reach this request's
+  functions only when the transport can tell which request a message was
+  sent for: in-process and HTTP can (messages carry metadata
+  :presa/related-request), stdio cannot, and its messages go to the
+  client's functions.
   - :meta         more _meta entries
   - :no-cache     true to ask the server even when the cache holds a result
   - :input        :return to hand an input_required result back instead of
@@ -374,6 +400,7 @@
                  :conn (atom nil)
                  :pending (atom {})
                  :progress (atom {})
+                 :in-flight (atom {})
                  :subscriptions (atom {})
                  :cache (when (:cache opts) (atom {}))
                  :next-id (atom 0)
@@ -626,7 +653,7 @@
              (= "input_required" status)
              (let [pending (remove (comp answered key) (get t "inputRequests"))]
                (when (seq pending)
-                 (update-task client id (answer-inputs client (into {} pending))))
+                 (update-task client id (answer-inputs client (into {} pending) {})))
                (when (empty? pending) (wait!))
                (recur (into answered (map key pending))))
 

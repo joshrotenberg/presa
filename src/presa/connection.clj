@@ -11,7 +11,9 @@
   "Open a connection to srv. Options:
 
   - :send  (fn [message]) delivers a response or notification to the client
-           (required). It may be called from several threads at once.
+           (required). It may be called from several threads at once. A
+           notification or request sent while a request runs has metadata
+           :presa/related-request, that request's id.
   - :log   (fn [& parts]) for diagnostics
   - :session  the initial session (default {})
 
@@ -34,12 +36,15 @@
         ;; requests sent to the client, by id: promise of the response
         outgoing (atom {})
         next-id (atom 0)
-        request (fn [method params timeout-ms]
+        ;; what a request sends while it runs carries its id, so a client
+        ;; transport that keeps metadata can route it to that request
+        tag (fn [related m] (if (some? related) (vary-meta m assoc :presa/related-request related) m))
+        request (fn [related method params timeout-ms]
                   (let [id (str "presa-" (swap! next-id inc))
                         p (promise)]
                     (swap! outgoing assoc id p)
                     (try
-                      (send (rpc/request id method params))
+                      (send (tag related (rpc/request id method params)))
                       (let [response (deref p timeout-ms ::timeout)]
                         (when (= ::timeout response)
                           (send (rpc/notification "notifications/cancelled" {"requestId" id "reason" "timeout"}))
@@ -49,7 +54,11 @@
                       (finally (swap! outgoing dissoc id)))))
         settle (fn [message]
                  (locking lock
-                   (let [prepared (server/prepare srv @session message {:notify send :request request})]
+                   (let [related (when (= :request (rpc/kind message)) (get message "id"))
+                         prepared (server/prepare srv @session message
+                                                  {:notify #(send (tag related %))
+                                                   :session-notify send
+                                                   :request (partial request related)})]
                      (reset! session (:session prepared))
                      prepared)))
         answer (fn [message]
