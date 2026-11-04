@@ -145,5 +145,24 @@ key with DPoP (RFC 9449): an ES256 key pair per provider, a proof in the
 A `use_dpop_nonce` answer, from the authorization server or the MCP
 server, is retried once with the nonce it gave. `:dpop false` turns this
 off. `presa.auth.dpop` makes the proofs.
+
+Two more grants need no user. `:grant :jwt-bearer` with `:assertion`
+(RFC 7523) trades a JWT for a token, as workload identity federation does;
+the assertion is a string or a function of `{:issuer :resource
+:token-endpoint}`. No client is registered, and a refused grant is final
+for that provider. `id-jag` is such a function for enterprise-managed
+authorization (SEP-990): it exchanges the user's ID token at the identity
+provider for an ID-JAG (RFC 8693) addressed to the authorization server
+the flow found.
+
+<!-- no-run -->
+```clojure
+(oauth/provider {:resource "https://mcp.example.com/mcp"
+                 :grant :jwt-bearer
+                 :client-id "mcp-client" :client-secret "..."
+                 :assertion (oauth/id-jag {:token-endpoint "https://idp.example.com/token"
+                                           :id-token id-token
+                                           :client-id "idp-client"})})
+```
 [docs/oauth-client.md](../oauth-client.md) is the reference; the
 conformance runner's 25 scored authorization scenarios pass.

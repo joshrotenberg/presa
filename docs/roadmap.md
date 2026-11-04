@@ -76,4 +76,4 @@ Open work is filed as issues, labelled by priority and area:
 
 | Issue | Priority |
 |---|---|
-| joshrotenberg/presa#43 workload identity and enterprise-managed authorization grants | p3 |
+| none open | |

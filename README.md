@@ -109,8 +109,9 @@ revision on the wire), [docs/tasks-extension.md](docs/tasks-extension.md),
 [conformance/](conformance/README.md) runs the official MCP conformance
 runner against a fixture server and a client harness. All 37 required
 2026-07-28 server scenarios pass, as do the ten Tasks extension scenarios, the
-2025-11-25 and 2025-06-18 server suites, and every scored client scenario,
-the 25 authorization ones included.
+2025-11-25 and 2025-06-18 server suites, and every client scenario at
+2026-07-28 and 2025-11-25: the 25 scored authorization ones, and the DPoP,
+workload identity, enterprise-managed and client credentials extensions.
 
 ## The example servers
 
