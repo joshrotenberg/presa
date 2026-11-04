@@ -186,66 +186,68 @@
       "sep-2575-server-unsupported-version-error" : [ "SUCCESS" ]
     },
     "tasks-capability-negotiation" : {
-      "sep-2663-server-rejects-undeclared-client" : [ "FAILURE" ],
-      "sep-2663-tasks-methods-non-declaring" : [ "FAILURE" ],
-      "tasks-extension-advertised" : [ "FAILURE" ],
-      "tasks-per-request-meta-opt-in" : [ "FAILURE" ],
+      "sep-2663-server-rejects-undeclared-client" : [ "SUCCESS" ],
+      "sep-2663-tasks-methods-non-declaring" : [ "SUCCESS" ],
+      "tasks-extension-advertised" : [ "SUCCESS" ],
+      "tasks-per-request-meta-opt-in" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tasks-dispatch-and-envelope" : {
-      "sep-2663-durable-create-strong-consistency" : [ "FAILURE" ],
-      "sep-2663-legacy-task-param-ignored" : [ "FAILURE" ],
-      "sep-2663-tasks-get-invalid-task-id-32602" : [ "FAILURE" ],
+      "sep-2663-durable-create-strong-consistency" : [ "SUCCESS" ],
+      "sep-2663-legacy-task-param-ignored" : [ "SUCCESS" ],
+      "sep-2663-tasks-get-invalid-task-id-32602" : [ "SUCCESS" ],
       "sep-2663-tasks-result-removed-method-not-found" : [ "SUCCESS" ],
-      "tasks-immediate-result-shortcut" : [ "FAILURE" ],
+      "tasks-immediate-result-shortcut" : [ "SUCCESS" ],
       "tasks-removed-tasks-list" : [ "SUCCESS" ],
-      "tasks-result-type-complete-on-non-task-responses" : [ "FAILURE" ],
-      "tasks-server-directed-creation-no-hint" : [ "FAILURE" ],
+      "tasks-result-type-complete-on-non-task-responses" : [ "SUCCESS" ],
+      "tasks-server-directed-creation-no-hint" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tasks-lifecycle" : {
-      "sep-2663-cancel-ack-empty-result" : [ "FAILURE" ],
-      "sep-2663-result-type-task-on-create" : [ "FAILURE" ],
-      "sep-2663-tasks-get-status-completed" : [ "FAILURE" ],
-      "sep-2663-tasks-get-status-failed" : [ "FAILURE" ],
-      "sep-2663-tasks-get-status-working" : [ "FAILURE" ],
-      "sep-2663-tool-error-uses-completed-status" : [ "FAILURE" ],
-      "tasks-cancel-terminal-idempotent-ack" : [ "FAILURE" ],
-      "tasks-sync-tool-call" : [ "FAILURE" ],
+      "sep-2663-cancel-ack-empty-result" : [ "SUCCESS" ],
+      "sep-2663-result-type-task-on-create" : [ "SUCCESS" ],
+      "sep-2663-tasks-get-status-completed" : [ "SUCCESS" ],
+      "sep-2663-tasks-get-status-failed" : [ "SUCCESS" ],
+      "sep-2663-tasks-get-status-working" : [ "SUCCESS" ],
+      "sep-2663-tool-error-uses-completed-status" : [ "SUCCESS" ],
+      "tasks-cancel-terminal-idempotent-ack" : [ "SUCCESS" ],
+      "tasks-sync-tool-call" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tasks-mrtr-composition" : {
-      "sep-2663-mrtr-synchronous-before-task-creation" : [ "FAILURE" ],
+      "sep-2663-mrtr-synchronous-before-task-creation" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tasks-mrtr-input" : {
-      "sep-2663-tasks-get-status-input-required" : [ "FAILURE" ],
-      "tasks-mrtr-partial-fulfillment" : [ "FAILURE" ],
-      "tasks-mrtr-tasks-update-resumes" : [ "FAILURE" ],
+      "sep-2663-tasks-get-status-input-required" : [ "SUCCESS" ],
+      "tasks-mrtr-partial-fulfillment" : [ "SUCCESS" ],
+      "tasks-mrtr-tasks-update-resumes" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tasks-request-headers" : {
-      "sep-2663-routing-headers-accepted-on-tasks-get" : [ "FAILURE" ],
-      "sep-2663-server-rejects-mismatched-mcp-name-on-tasks-get" : [ "FAILURE" ],
+      "sep-2663-routing-headers-accepted-on-tasks-get" : [ "SUCCESS" ],
+      "sep-2663-server-rejects-mismatched-mcp-name-on-tasks-get" : [ "SUCCESS" ],
       "tasks-headers-reject-mismatched-method" : [ "SUCCESS" ],
-      "tasks-headers-tolerate-mcp-method-on-tools-call" : [ "FAILURE" ],
+      "tasks-headers-tolerate-mcp-method-on-tools-call" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tasks-request-state-removal" : {
-      "tasks-request-state-removal-setup" : [ "FAILURE" ],
+      "tasks-create-result-no-request-state" : [ "SUCCESS" ],
+      "tasks-get-detailed-no-request-state" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tasks-required-task-error" : {
-      "sep-2663-server-returns-missing-capability-when-required" : [ "FAILURE" ],
+      "sep-2663-server-returns-missing-capability-data-shape" : [ "SUCCESS" ],
+      "sep-2663-server-returns-missing-capability-when-required" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tasks-status-notifications" : {
       "tasks-status-notifications" : [ "SKIPPED" ]
     },
     "tasks-wire-fields" : {
-      "tasks-no-early-ttl-expiry" : [ "FAILURE" ],
-      "tasks-no-related-task-meta-on-inlined-result" : [ "FAILURE" ],
-      "tasks-wire-field-renames" : [ "FAILURE" ],
+      "tasks-no-early-ttl-expiry" : [ "SUCCESS" ],
+      "tasks-no-related-task-meta-on-inlined-result" : [ "SUCCESS" ],
+      "tasks-wire-field-renames" : [ "SUCCESS" ],
       "wire-schema-valid" : [ "SUCCESS" ]
     },
     "tools-call-audio" : {

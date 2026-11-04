@@ -61,7 +61,8 @@
 
 (defn- selection []
   (cond
-    scenario ["--scenario" scenario "--spec-version" revision]
+    ;; --force runs extension scenarios, which a named run otherwise skips
+    scenario ["--scenario" scenario "--spec-version" revision "--force"]
     frozen? ["--requirements" revision]
     :else ["--spec-version" revision "--suite" "active"]))
 
