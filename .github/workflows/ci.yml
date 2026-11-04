@@ -69,6 +69,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # the branch's own commits, not GitHub's merge commit for the PR
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
         with:
           bb: latest
