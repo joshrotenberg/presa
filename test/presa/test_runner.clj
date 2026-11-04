@@ -18,6 +18,7 @@
             [presa.input-test]
             [presa.jsonrpc-test]
             [presa.limits-test]
+            [presa.part-test]
             [presa.protocol-test]
             [presa.proxy-test]
             [presa.schema-test]
@@ -36,6 +37,7 @@
     presa.server-test
     presa.server-surface-test
     presa.authoring-test
+    presa.part-test
     presa.schema-test
     presa.transport.stdio-test
     presa.transport.http-test

@@ -77,6 +77,7 @@ not pull in; pass `presa.schema.networknt/validator` as the server's
 | `presa.transport.http` | Streamable HTTP: a server over http-kit, a client over `java.net.http` |
 | `presa.transport.http.*` | internal to `presa.transport.http`: `server` (http-kit), `client` (`java.net.http`), `headers` (MCP header values) |
 | `presa.proxy` | one server in front of several MCP servers |
+| `presa.part` | a server composed from parts (tools, resources, prompts, instructions, `:close!`): combine, prefix, serve, call in process |
 | `presa.tasks` | the Tasks extension's task store and wire shapes |
 | `presa.auth`, `presa.auth.jwt` | OAuth 2.1 resource server: metadata, bearer challenges, JWT verification (RS256, ES256, HS256, JWKS) |
 | `presa.auth.client` | OAuth 2.1 client: discovery, registration, PKCE code flow, client credentials, JWT-bearer (workload identity) and enterprise-managed (`id-jag`) grants, DPoP, step-up |
@@ -115,6 +116,7 @@ not pull in; pass `presa.schema.networknt/validator` as the server's
 | [Subscriptions](docs/guides/subscriptions.md) | `subscriptions/listen`, list changes, resource updates |
 | [Tasks](docs/guides/tasks.md) | the Tasks extension: long-running tools, server and client |
 | [Authorization](docs/guides/authorization.md) | the OAuth 2.1 resource server and client, JWT verification, scopes |
+| [Parts](docs/guides/parts.md) | servers composed from parts: combining, prefixing, serving, calling in process |
 | [The proxy](docs/guides/proxy.md) | one server in front of several, what it forwards, input from initialize-era backends |
 | [Initialize-era clients](docs/guides/initialize-era.md) | serving 2025-11-25 and 2025-06-18, and what differs |
 | [Logging, progress and instrumentation](docs/guides/observability.md) | `log!`, `progress!`, `:on-event` |
