@@ -85,6 +85,296 @@
       (f {:token token :method method :url endpoint})
       {"authorization" (str "Bearer " token)})))
 
+
+;; A connection: what url's transport shares between requests
+;;
+;; :client :uri :endpoint :headers :token-provider :log :on-message :on-close
+;; :state        {:session-id :version :initialize-id :session-stream
+;;                :stream-ready :list-id}
+;; :annotations  tool name -> its x-mcp-header annotations
+;; :streams      request id -> {:body stream}, open POST event streams;
+;;               closing one cancels its request
+;; :closed       true once close! has run
+;; :answered     ids of the responses delivered, to tell a stream that
+;;               ended before its response from one that carried it
+
+(defn- with-headers
+  "Add each header of headers to builder; returns builder."
+  ^java.net.http.HttpRequest$Builder [^java.net.http.HttpRequest$Builder builder headers]
+  (doseq [[k v] headers] (.header builder (str k) (str v)))
+  builder)
+
+(defn- token
+  "The provider's current token, or nil without a provider."
+  [{:keys [token-provider endpoint]}]
+  (when token-provider ((:token token-provider) {:url endpoint})))
+
+(defn- response-header [^HttpResponse resp k]
+  (.orElse (.firstValue (.headers resp) k) nil))
+
+(defn- deliver!
+  "Hand message m to the client, or to a tools listing of the transport's
+  own, noting a response's id and an initialize result's version."
+  [{:keys [state annotations answered log on-message]} m]
+  (when (#{:response :error} (rpc/kind m))
+    (swap! answered conj (get m "id")))
+  (let [m (filter-tools m annotations log)]
+    (if *listing*
+      (*listing* m)
+      (do
+        (when (and (= (get m "id") (:initialize-id @state)) (get-in m ["result" "protocolVersion"]))
+          (swap! state assoc :version (get-in m ["result" "protocolVersion"])))
+        (on-message m)))))
+
+(defn- open-get
+  "A GET event stream for an initialize-era session: the session's own
+  stream, or a resumed POST stream. The response, or nil when the server
+  answers with anything but an event stream."
+  [{:keys [^HttpClient client uri state headers token-provider endpoint] :as conn} last-event-id]
+  (let [builder (-> (HttpRequest/newBuilder uri)
+                    (.header "accept" "text/event-stream")
+                    (.GET))]
+    (when-let [sid (:session-id @state)] (.header builder "mcp-session-id" sid))
+    (when-let [v (:version @state)] (.header builder "mcp-protocol-version" v))
+    (with-headers builder (auth-headers token-provider endpoint (token conn) "GET"))
+    (when last-event-id (.header builder "last-event-id" last-event-id))
+    (with-headers builder headers)
+    (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))
+          content-type (str/lower-case (or (response-header resp "content-type") ""))]
+      (if (and (= 200 (.statusCode resp)) (str/starts-with? content-type "text/event-stream"))
+        resp
+        (do (.close ^java.io.InputStream (.body resp)) nil)))))
+
+(defn- for-request
+  "A deliver function for a request's own stream: what arrives there was
+  sent for that request."
+  [conn id]
+  (fn [m] (deliver! conn (vary-meta m assoc :presa/related-request id))))
+
+(defn- resume!
+  "The server ended a POST stream before the response: reconnect with GET
+  and Last-Event-ID, after retry-ms, up to five times."
+  [{:keys [closed answered] :as conn} id {:keys [last-event-id retry-ms]}]
+  (loop [seen {:last-event-id last-event-id :retry-ms retry-ms} attempts 0]
+    (when (and (not @closed) (not (contains? @answered id)) (< attempts 5))
+      (Thread/sleep (long (or (:retry-ms seen) 1000)))
+      (when-let [^HttpResponse resp (open-get conn (:last-event-id seen))]
+        (let [more (try (read-events (.body resp) (for-request conn id)) (catch java.io.IOException _ {}))]
+          (recur (merge seen more) (inc attempts)))))))
+
+(defn- session-stream!
+  "The standalone stream an initialize-era server uses for requests and
+  notifications outside a request; stops when the server has none (405).
+  ready is delivered once the first attempt is answered, so later requests
+  can wait for it."
+  [{:keys [closed state] :as conn} ready]
+  (future
+    (loop [seen {}]
+      (when-not @closed
+        (when-let [^HttpResponse resp (try (open-get conn (:last-event-id seen))
+                                           (catch Exception _ nil)
+                                           (finally (deliver ready true)))]
+          (swap! state assoc :session-stream (.body resp))
+          (let [more (try (read-events (.body resp) #(deliver! conn %)) (catch java.io.IOException _ {}))
+                seen (merge seen more)]
+            (when-not @closed
+              (Thread/sleep (long (or (:retry-ms seen) 1000)))
+              (recur seen))))))))
+
+;; Posting a message
+
+(defn- send-post
+  "POST message with token; hands a DPoP-Nonce response header to the
+  provider's :nonce!."
+  [{:keys [^HttpClient client uri headers token-provider endpoint state annotations]} message token]
+  (let [builder (-> (HttpRequest/newBuilder uri)
+                    (with-headers (merge (request-headers message state annotations) headers))
+                    (with-headers (auth-headers token-provider endpoint token "POST")))]
+    (.POST builder (HttpRequest$BodyPublishers/ofString (write-json message)))
+    (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))]
+      (when-let [nonce (response-header resp "dpop-nonce")]
+        (when-let [f (:nonce! token-provider)] (f endpoint nonce)))
+      resp)))
+
+(defn- send-post*
+  "send-post, once more with the same token and a proof carrying the new
+  nonce after a 401 use_dpop_nonce."
+  [{:keys [token-provider] :as conn} message token]
+  (let [^HttpResponse resp (send-post conn message token)
+        header (response-header resp "www-authenticate")]
+    (if (and token (:nonce! token-provider) (= 401 (.statusCode resp))
+             (some? (response-header resp "dpop-nonce"))
+             (= "use_dpop_nonce" (get-in (when header (auth-client/bearer-challenge header))
+                                         [:params "error"])))
+      (do (.close ^java.io.InputStream (.body resp))
+          (send-post conn message token))
+      resp)))
+
+(defn- challenge-of
+  "{:status :challenge :header} for a 401, or a 403 insufficient_scope;
+  nil for any other response."
+  [^HttpResponse resp]
+  (let [status (.statusCode resp)
+        header (response-header resp "www-authenticate")
+        c (when header (auth-client/bearer-challenge header))]
+    (when (or (= 401 status)
+              (and (= 403 status) (= "insufficient_scope" (get-in c [:params "error"]))))
+      {:status status :challenge c :header header})))
+
+(defn- refused
+  "Tell the client that request id was refused, with the status and
+  challenge."
+  [conn id {:keys [status header]} & [cause]]
+  (when (some? id)
+    (deliver! conn (rpc/error id -32000 (str "HTTP " status (when cause (str ": " cause)))
+                              (cond-> {"status" status}
+                                header (assoc "challenge" header))))))
+
+(defn- authorized-response
+  "The response to message. A 401, or a 403 asking for more scope, goes to
+  the token provider once, then the request is sent again. nil when the
+  request was refused; refused has told the client."
+  [{:keys [token-provider endpoint] :as conn} message]
+  (let [id (get message "id")
+        token (token conn)
+        first-try (send-post* conn message token)]
+    (if-let [refusal (challenge-of first-try)]
+      (do (.close ^java.io.InputStream (.body first-try))
+          (if-not token-provider
+            (do (refused conn id refusal) nil)
+            (let [new-token (try ((:refresh token-provider)
+                                  (assoc refusal :token token :url endpoint))
+                                 (catch Exception e
+                                   (refused conn id refusal (or (ex-message e) "authorization failed"))
+                                   :presa.transport.http/failed))]
+              (when-not (= :presa.transport.http/failed new-token)
+                (let [again (send-post* conn message new-token)]
+                  (if-let [refusal (challenge-of again)]
+                    (do (.close ^java.io.InputStream (.body again)) (refused conn id refusal) nil)
+                    again))))))
+      first-try)))
+
+(defn- read-response!
+  "Deliver what resp carries for message: an event stream (resumed when it
+  ends before the response), a JSON response, or an error for a failing
+  status."
+  [{:keys [state streams answered] :as conn} message ^HttpResponse resp]
+  (let [id (get message "id")
+        status (.statusCode resp)
+        content-type (str/lower-case (or (response-header resp "content-type") ""))]
+    (when-let [sid (response-header resp "mcp-session-id")]
+      (swap! state assoc :session-id sid))
+    (cond
+      (str/starts-with? content-type "text/event-stream")
+      (let [body (.body resp)
+            _ (when (some? id) (swap! streams update id assoc :body body))
+            seen (try (read-events body (if (and (some? id) (contains? message "method"))
+                                          (for-request conn id)
+                                          #(deliver! conn %)))
+                      (catch java.io.IOException e
+                        (when-not (contains? @streams id) (throw e))
+                        :presa.transport.http/cancelled)
+                      (finally (when (some? id) (swap! streams dissoc id))))]
+        (when (and (some? id) (map? seen) (:session-id @state)
+                   (not (contains? @answered id)))
+          (resume! conn id seen)))
+
+      (str/starts-with? content-type "application/json")
+      (let [body (slurp (.body resp) :encoding "UTF-8")
+            m (try (rpc/parse-line body) (catch Exception _ nil))]
+        (if (and (map? m) (#{:response :error} (rpc/kind m)))
+          (deliver! conn m)
+          (when (some? id)
+            (deliver! conn (rpc/error id -32000 (str "HTTP " status " with an unreadable body")
+                                      {"status" status})))))
+
+      :else
+      (do (.close ^java.io.InputStream (.body resp))
+          (when (and (some? id) (not (<= 200 status 299)))
+            (deliver! conn (rpc/error id -32000 (str "HTTP " status) {"status" status})))))))
+
+(defn- post [conn message]
+  (when-let [resp (authorized-response conn message)]
+    (read-response! conn message resp)))
+
+(defn- list-tools!
+  "Learn the tools' x-mcp-header annotations before calling one this
+  transport has not seen listed."
+  [{:keys [state] :as conn} message]
+  (let [meta (get-in message ["params" "_meta"])]
+    (loop [cursor nil pages 0]
+      (let [id (str "presa-tools-" (:list-id (swap! state update :list-id (fnil inc 0))) "-" pages)
+            result (atom nil)
+            request (rpc/request id "tools/list" (cond-> {}
+                                                   meta (assoc "_meta" (dissoc meta "progressToken"))
+                                                   cursor (assoc "cursor" cursor)))]
+        (binding [*listing* (fn [m] (when (= id (get m "id")) (reset! result m)))]
+          (post conn request))
+        (let [next-cursor (get-in @result ["result" "nextCursor"])]
+          (when (and (string? next-cursor) (< pages 100))
+            (recur next-cursor (inc pages))))))))
+
+;; The transport
+
+(defn- send!
+  "Send message on its own thread, or cancel a request by closing its
+  stream."
+  [{:keys [closed state streams annotations log on-message] :as conn} message]
+  (when @closed
+    (throw (ex-info "The transport is closed" {:kind :closed})))
+  (when (= "initialize" (get message "method"))
+    (swap! state assoc :initialize-id (get message "id")))
+  (if-let [{:keys [^java.io.InputStream body]}
+           (and (= "notifications/cancelled" (get message "method"))
+                (get @streams (get-in message ["params" "requestId"])))]
+    ;; over HTTP, closing the response stream (and with it the connection)
+    ;; cancels the request
+    (do (swap! streams dissoc (get-in message ["params" "requestId"]))
+        (try (.close body) (catch Exception _)))
+    ;; Each message is posted on its own thread. The promise a later request
+    ;; waits on is made here, in send order, so a request sent just after
+    ;; initialized cannot be posted before the session stream opens.
+    (let [ready (when (= "notifications/initialized" (get message "method"))
+                  (let [p (promise)] (swap! state assoc :stream-ready p) p))]
+      (future
+        (try (when (and (= "tools/call" (get message "method"))
+                        (not (contains? @annotations (get-in message ["params" "name"]))))
+               (try (list-tools! conn message) (catch Exception _)))
+             ;; a request sent just after initialized waits for the session
+             ;; stream, where the server may answer it
+             (when-let [ready (and (not= "notifications/initialized" (get message "method"))
+                                   (:stream-ready @state))]
+               (deref ready 2000 nil))
+             (post conn message)
+             (when ready
+               (if (:session-id @state)
+                 (session-stream! conn ready)
+                 (deliver ready true)))
+             (catch Throwable e
+               (log "HTTP request failed: " (.getName (class e)) ": " (ex-message e)
+                    (when-let [c (ex-cause e)] (str " (" (.getName (class c)) ": " (ex-message c) ")")))
+               (some-> ready (deliver true))
+               (when-let [id (get message "id")]
+                 (on-message (rpc/error id -32000 (str "HTTP request failed: " (ex-message e)))))))))))
+
+(defn- close!
+  "Close the session stream, end an initialize-era session with DELETE, and
+  tell the client. Only the first call does anything."
+  [{:keys [closed state ^HttpClient client uri token-provider endpoint on-close] :as conn}]
+  (when (compare-and-set! closed false true)
+    (when-let [^java.io.InputStream s (:session-stream @state)]
+      (try (.close s) (catch Exception _)))
+    (when-let [sid (:session-id @state)]
+      (try
+        (.send client (-> (HttpRequest/newBuilder uri)
+                          (.header "mcp-session-id" sid)
+                          (with-headers (auth-headers token-provider endpoint (token conn) "DELETE"))
+                          (.DELETE)
+                          (.build))
+               (HttpResponse$BodyHandlers/discarding))
+        (catch Exception _)))
+    (when on-close (on-close))))
+
 (defn url
   "A presa.client transport to the Streamable HTTP endpoint at endpoint.
   Options:
@@ -107,237 +397,21 @@
    (when (and token-provider (some #(= "authorization" (str/lower-case (str %))) (keys headers)))
      (throw (ex-info "Pass a token provider or an Authorization header, not both" {:kind :invalid-input})))
    (fn [{:keys [on-message on-close]}]
-     (let [client (-> (HttpClient/newBuilder)
-                      (.version HttpClient$Version/HTTP_1_1)
-                      (.connectTimeout (Duration/ofMillis connect-timeout-ms))
-                      (.build))
-           uri (URI. endpoint)
-           state (atom {})
-           annotations (atom {})
-           ;; open event streams by request id, closed to cancel the request
-           streams (atom {})
-           closed (atom false)
-           ;; ids of the responses delivered, to tell a stream that ended
-           ;; before its response from one that carried it
-           answered (atom #{})
-           deliver! (fn [m]
-                      (when (#{:response :error} (rpc/kind m))
-                        (swap! answered conj (get m "id")))
-                      (let [m (filter-tools m annotations log)]
-                        (if *listing*
-                          (*listing* m)
-                          (do
-                            (when (and (= (get m "id") (:initialize-id @state)) (get-in m ["result" "protocolVersion"]))
-                              (swap! state assoc :version (get-in m ["result" "protocolVersion"])))
-                            (on-message m)))))
-           open-get (fn [last-event-id]
-                      ;; A GET event stream for an initialize-era session:
-                      ;; the session's own stream, or a resumed POST stream.
-                      (let [builder (-> (HttpRequest/newBuilder uri)
-                                        (.header "accept" "text/event-stream")
-                                        (.GET))]
-                        (when-let [sid (:session-id @state)] (.header builder "mcp-session-id" sid))
-                        (when-let [v (:version @state)] (.header builder "mcp-protocol-version" v))
-                        (doseq [[k v] (auth-headers token-provider endpoint
-                                                    (when token-provider ((:token token-provider) {:url endpoint}))
-                                                    "GET")]
-                          (.header builder (str k) (str v)))
-                        (when last-event-id (.header builder "last-event-id" last-event-id))
-                        (doseq [[k v] headers] (.header builder (str k) (str v)))
-                        (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))
-                              content-type (str/lower-case (.orElse (.firstValue (.headers resp) "content-type") ""))]
-                          (if (and (= 200 (.statusCode resp)) (str/starts-with? content-type "text/event-stream"))
-                            resp
-                            (do (.close ^java.io.InputStream (.body resp)) nil)))))
-           for-request (fn [id]
-                         ;; what arrives on a request's own stream was sent
-                         ;; for that request
-                         (fn [m] (deliver! (vary-meta m assoc :presa/related-request id))))
-           resume! (fn [id {:keys [last-event-id retry-ms]}]
-                     ;; The server ended a POST stream before the response:
-                     ;; reconnect with GET and Last-Event-ID, after retry-ms.
-                     (loop [seen {:last-event-id last-event-id :retry-ms retry-ms} attempts 0]
-                       (when (and (not @closed) (not (contains? @answered id)) (< attempts 5))
-                         (Thread/sleep (long (or (:retry-ms seen) 1000)))
-                         (when-let [^HttpResponse resp (open-get (:last-event-id seen))]
-                           (let [more (try (read-events (.body resp) (for-request id)) (catch java.io.IOException _ {}))]
-                             (recur (merge seen more) (inc attempts)))))))
-           session-stream! (fn [ready]
-                             ;; The standalone stream an initialize-era server
-                             ;; uses for requests and notifications outside a
-                             ;; request; stops when the server has none (405).
-                             ;; ready is delivered once the first attempt is
-                             ;; answered, so later requests can wait for it.
-                             (future
-                               (loop [seen {}]
-                                 (when-not @closed
-                                   (when-let [^HttpResponse resp (try (open-get (:last-event-id seen))
-                                                                      (catch Exception _ nil)
-                                                                      (finally (deliver ready true)))]
-                                     (swap! state assoc :session-stream (.body resp))
-                                     (let [more (try (read-events (.body resp) deliver!) (catch java.io.IOException _ {}))
-                                           seen (merge seen more)]
-                                       (when-not @closed
-                                         (Thread/sleep (long (or (:retry-ms seen) 1000)))
-                                         (recur seen))))))))
-           send-post (fn [message token]
-                       (let [builder (HttpRequest/newBuilder uri)]
-                         (doseq [[k v] (merge (request-headers message state annotations) headers)]
-                           (.header builder (str k) (str v)))
-                         (doseq [[k v] (auth-headers token-provider endpoint token "POST")]
-                           (.header builder (str k) (str v)))
-                         (.POST builder (HttpRequest$BodyPublishers/ofString (write-json message)))
-                         (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))]
-                           (when-let [nonce (.orElse (.firstValue (.headers resp) "dpop-nonce") nil)]
-                             (when-let [f (:nonce! token-provider)] (f endpoint nonce)))
-                           resp)))
-           send-post* (fn [message token]
-                        ;; a 401 use_dpop_nonce with a new nonce: once more
-                        ;; with the same token and a proof carrying it
-                        (let [^HttpResponse resp (send-post message token)
-                              header (.orElse (.firstValue (.headers resp) "www-authenticate") nil)]
-                          (if (and token (:nonce! token-provider) (= 401 (.statusCode resp))
-                                   (.isPresent (.firstValue (.headers resp) "dpop-nonce"))
-                                   (= "use_dpop_nonce" (get-in (when header (auth-client/bearer-challenge header))
-                                                               [:params "error"])))
-                            (do (.close ^java.io.InputStream (.body resp))
-                                (send-post message token))
-                            resp)))
-           challenge-of (fn [^HttpResponse resp]
-                          (let [status (.statusCode resp)
-                                header (.orElse (.firstValue (.headers resp) "www-authenticate") nil)
-                                c (when header (auth-client/bearer-challenge header))]
-                            (when (or (= 401 status)
-                                      (and (= 403 status) (= "insufficient_scope" (get-in c [:params "error"]))))
-                              {:status status :challenge c :header header})))
-           refused (fn [id {:keys [status header]} & [cause]]
-                     (when (some? id)
-                       (deliver! (rpc/error id -32000 (str "HTTP " status (when cause (str ": " cause)))
-                                            (cond-> {"status" status}
-                                              header (assoc "challenge" header))))))
-           post (fn [message]
-                  (let [id (get message "id")
-                        token (when token-provider ((:token token-provider) {:url endpoint}))
-                        first-try (send-post* message token)
-                        ;; a 401, or a 403 asking for more scope, goes to the
-                        ;; token provider once, then the request is sent again
-                        ^HttpResponse resp
-                        (if-let [refusal (challenge-of first-try)]
-                          (do (.close ^java.io.InputStream (.body first-try))
-                              (if-not token-provider
-                                (do (refused id refusal) nil)
-                                (let [new-token (try ((:refresh token-provider)
-                                                      (assoc refusal :token token :url endpoint))
-                                                     (catch Exception e
-                                                       (refused id refusal (or (ex-message e) "authorization failed"))
-                                                       :presa.transport.http/failed))]
-                                  (when-not (= :presa.transport.http/failed new-token)
-                                    (let [again (send-post* message new-token)]
-                                      (if-let [refusal (challenge-of again)]
-                                        (do (.close ^java.io.InputStream (.body again)) (refused id refusal) nil)
-                                        again))))))
-                          first-try)]
-                    (when resp
-                    (let [status (.statusCode resp)
-                          content-type (str/lower-case (.orElse (.firstValue (.headers resp) "content-type") ""))]
-                      (when-let [sid (.orElse (.firstValue (.headers resp) "mcp-session-id") nil)]
-                        (swap! state assoc :session-id sid))
-                      (cond
-                        (str/starts-with? content-type "text/event-stream")
-                        (let [body (.body resp)
-                              _ (when (some? id) (swap! streams update id assoc :body body))
-                              seen (try (read-events body (if (and (some? id) (contains? message "method"))
-                                                            (for-request id)
-                                                            deliver!))
-                                        (catch java.io.IOException e
-                                          (when-not (contains? @streams id) (throw e))
-                                          :presa.transport.http/cancelled)
-                                        (finally (when (some? id) (swap! streams dissoc id))))]
-                          (when (and (some? id) (map? seen) (:session-id @state)
-                                     (not (contains? @answered id)))
-                            (resume! id seen)))
-
-                        (str/starts-with? content-type "application/json")
-                        (let [body (slurp (.body resp) :encoding "UTF-8")
-                              m (try (rpc/parse-line body) (catch Exception _ nil))]
-                          (if (and (map? m) (#{:response :error} (rpc/kind m)))
-                            (deliver! m)
-                            (when (some? id)
-                              (deliver! (rpc/error id -32000 (str "HTTP " status " with an unreadable body")
-                                                   {"status" status})))))
-
-                        :else
-                        (do (.close ^java.io.InputStream (.body resp))
-                            (when (and (some? id) (not (<= 200 status 299)))
-                              (deliver! (rpc/error id -32000 (str "HTTP " status) {"status" status})))))))))
-           list-tools! (fn [message]
-                         ;; Learn the tools' x-mcp-header annotations before
-                         ;; calling one this transport has not seen listed.
-                         (let [meta (get-in message ["params" "_meta"])]
-                           (loop [cursor nil pages 0]
-                             (let [id (str "presa-tools-" (swap! state update :list-id (fnil inc 0)) "-" pages)
-                                   result (atom nil)
-                                   request (rpc/request id "tools/list" (cond-> {}
-                                                                          meta (assoc "_meta" (dissoc meta "progressToken"))
-                                                                          cursor (assoc "cursor" cursor)))]
-                               (binding [*listing* (fn [m] (when (= id (get m "id")) (reset! result m)))]
-                                 (post request))
-                               (let [next-cursor (get-in @result ["result" "nextCursor"])]
-                                 (when (and (string? next-cursor) (< pages 100))
-                                   (recur next-cursor (inc pages))))))))]
-       {:send! (fn [message]
-                 (when @closed
-                   (throw (ex-info "The transport is closed" {:kind :closed})))
-                 (when (= "initialize" (get message "method"))
-                   (swap! state assoc :initialize-id (get message "id")))
-                 (if-let [{:keys [^java.io.InputStream body]}
-                          (and (= "notifications/cancelled" (get message "method"))
-                               (get @streams (get-in message ["params" "requestId"])))]
-                   ;; over HTTP, closing the response stream (and with it the
-                   ;; connection) cancels the request
-                   (do (swap! streams dissoc (get-in message ["params" "requestId"]))
-                       (try (.close body) (catch Exception _)))
-                 ;; Each message is posted on its own thread. The promise a
-                 ;; later request waits on is made here, in send order, so a
-                 ;; request sent just after initialized cannot be posted
-                 ;; before the session stream opens.
-                 (let [ready (when (= "notifications/initialized" (get message "method"))
-                               (let [p (promise)] (swap! state assoc :stream-ready p) p))]
-                 (future
-                   (try (when (and (= "tools/call" (get message "method"))
-                                   (not (contains? @annotations (get-in message ["params" "name"]))))
-                          (try (list-tools! message) (catch Exception _)))
-                        ;; a request sent just after initialized waits for the
-                        ;; session stream, where the server may answer it
-                        (when-let [ready (and (not= "notifications/initialized" (get message "method"))
-                                              (:stream-ready @state))]
-                          (deref ready 2000 nil))
-                        (post message)
-                        (when ready
-                          (if (:session-id @state)
-                            (session-stream! ready)
-                            (deliver ready true)))
-                        (catch Throwable e
-                          (log "HTTP request failed: " (.getName (class e)) ": " (ex-message e)
-                               (when-let [c (ex-cause e)] (str " (" (.getName (class c)) ": " (ex-message c) ")")))
-                          (some-> ready (deliver true))
-                          (when-let [id (get message "id")]
-                            (on-message (rpc/error id -32000 (str "HTTP request failed: " (ex-message e)))))))))))
-        :close! (fn []
-                  (when (compare-and-set! closed false true)
-                    (when-let [^java.io.InputStream s (:session-stream @state)]
-                      (try (.close s) (catch Exception _)))
-                    (when-let [sid (:session-id @state)]
-                      (try
-                        (.send client (-> (HttpRequest/newBuilder uri)
-                                          (.header "mcp-session-id" sid)
-                                          (as-> b (reduce (fn [b [k v]] (.header ^java.net.http.HttpRequest$Builder b (str k) (str v)))
-                                                                  b
-                                                                  (auth-headers token-provider endpoint
-                                                                                (when token-provider ((:token token-provider) {:url endpoint}))
-                                                                                "DELETE")))
-                                          (.DELETE)
-                                          (.build))
-                               (HttpResponse$BodyHandlers/discarding))
-                        (catch Exception _)))
-                    (when on-close (on-close))))}))))
+     (let [conn {:client (-> (HttpClient/newBuilder)
+                             (.version HttpClient$Version/HTTP_1_1)
+                             (.connectTimeout (Duration/ofMillis connect-timeout-ms))
+                             (.build))
+                 :uri (URI. endpoint)
+                 :endpoint endpoint
+                 :headers headers
+                 :token-provider token-provider
+                 :log log
+                 :on-message on-message
+                 :on-close on-close
+                 :state (atom {})
+                 :annotations (atom {})
+                 :streams (atom {})
+                 :closed (atom false)
+                 :answered (atom #{})}]
+       {:send! (fn [message] (send! conn message))
+        :close! (fn [] (close! conn))}))))

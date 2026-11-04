@@ -258,3 +258,28 @@
         (is (= 200 (status s "http://localhost")))
         (is (= 200 (status s (str "http://127.0.0.1:" (:port s)))))
         (is (= 200 (status s (str "http://[::1]:" (:port s)))))))))
+
+(deftest own-tools-listing
+  ;; Calling a tool it has not seen listed, the transport lists tools first
+  ;; to learn their x-mcp-header annotations, with a request id of its own.
+  (let [events (atom [])
+        s (http/serve! (server/server {:name "t" :version "1" :versions protocol/versions
+                                       :on-event #(swap! events conj %)
+                                       :tools [{:name "region"
+                                                :input-schema {"type" "object"
+                                                               "properties" {"region" {"type" "string"
+                                                                                       "x-mcp-header" "Region"}}}
+                                                :handler (fn [{:strs [region]} _] (str "region " region))}]}))]
+    (try
+      (doseq [versions [[protocol/latest-version] ["2025-11-25"]]]
+        (testing (str "over " versions)
+          (reset! events [])
+          (let [c (client/connect (http/url (:url s)) {:versions versions})]
+            (try
+              (is (= "region eu" (client/text (client/call-tool c "region" {"region" "eu"}))))
+              (let [listing (filter #(= "tools/list" (:method %)) @events)]
+                (is (seq (filter #(= :request/start (:event %)) listing)))
+                (is (empty? (filter #(= :request/rejected (:event %)) listing)))
+                (is (every? #(re-matches #"presa-tools-\d+-\d+" (str (:request-id %))) listing)))
+              (finally (client/close c))))))
+      (finally ((:stop! s))))))
