@@ -43,6 +43,7 @@ under a prefix, and its resources and templates under their own URIs.
 | input from an initialize-era backend | the call is parked while the proxy asks the caller (below) |
 | list changes | a 2026-07-28 backend's list change resyncs the proxy and reaches the proxy's listeners; initialize-era backends are listed once, at start |
 | completion | argument completion for a backend's prompts and templates goes to that backend |
+| cancellation | a call the caller cancels (or times out on) is cancelled at the backend with `notifications/cancelled`, on every transport |
 
 The log message above reached the caller:
 
@@ -89,9 +90,10 @@ handler that returns `input_required`.
 
 A parked call lives in the proxy's process. If the caller does not answer
 within the backend client's timeout, the backend's request fails and the
-parked call is forgotten; a retry after that is refused with -32602. A
-caller that did not declare the capability gets -32021, and the backend's
-request fails at once.
+parked call is forgotten; a retry after that is refused with -32602. An
+initialize-era caller that gives up on the request presa sent it frees the
+parked call at once. A caller that did not declare the capability gets
+-32021, and the backend's request fails at once.
 
 ## What is not forwarded
 
@@ -100,7 +102,6 @@ request fails at once.
   In-process and Streamable HTTP backends are matched: their messages
   carry the id of the request they were sent for.
 - Subscriptions to backend resources.
-- Cancellation: a call the caller cancels is not cancelled at the backend.
 
 `:separator` on a backend map replaces the `_` between its prefix and a
 name.

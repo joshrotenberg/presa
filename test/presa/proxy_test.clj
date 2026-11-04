@@ -172,3 +172,53 @@
                (is (not= :still-waiting (deref @stopped 5000 :still-waiting)) "the backend's call ended at once")
                (finally (client/close plain)))))
       (finally (client/close c) (close!)))))
+
+;; Cancellation
+
+(defn- slow-backend
+  "A backend whose wait tool runs until cancelled, then delivers seen."
+  [seen versions]
+  (server/server
+   {:name "slow" :version "1" :versions versions
+    :tools [{:name "wait" :description "Waits until cancelled"
+             :handler (fn [_ ctx]
+                        (loop [n 0]
+                          (cond
+                            ((:cancelled? ctx)) (do (deliver seen :cancelled) "cancelled")
+                            (> n 500) (do (deliver seen :ran-out) "done")
+                            :else (do (try (Thread/sleep 10)
+                                           ;; an interrupted handler is a cancelled one too
+                                           (catch InterruptedException _ (deliver seen :cancelled)))
+                                      (recur (inc n))))))}]}))
+
+(deftest a-cancelled-call-is-cancelled-at-the-backend
+  (doseq [versions [protocol/versions ["2025-11-25"]]]
+    (testing (str "a backend speaking " (first versions))
+      (let [seen (promise)
+            backend (client/connect (client/in-process (slow-backend seen protocol/versions)) {:versions versions})
+            {:keys [server close!]} (proxy/proxy-server [{:prefix "s" :client backend}] {:name "front" :version "1"})
+            c (client/connect (client/in-process server))]
+        (try
+          (is (= :timeout (:kind (ex-data (try (client/call-tool c "s_wait" {} {:timeout-ms 200})
+                                               (catch Exception e e))))))
+          (is (= :cancelled (deref seen 3000 :still-running)))
+          (finally (client/close c) (close!)))))))
+
+(deftest a-parked-call-is-freed-when-its-caller-gives-up
+  (let [stopped (promise)
+        on-event (fn [{:keys [event method]}]
+                   (when (and (= :request/stop event) (= "tools/call" method)) (deliver stopped true)))
+        backend (client/connect (client/in-process (chatty-backend {:on-event on-event}))
+                                {:versions ["2025-11-25"] :capabilities elicit-caps :timeout-ms 30000})
+        {:keys [server close!]} (proxy/proxy-server [{:prefix "old" :client backend}]
+                                                    {:name "front" :version "1" :versions protocol/versions})
+        never (promise)
+        ;; an initialize-era caller that never answers, then gives up
+        c (client/connect (client/in-process server)
+                          {:versions ["2025-11-25"]
+                           :handlers {"elicitation/create" (fn [_] @never)}})]
+    (try
+      (is (= :timeout (:kind (ex-data (try (client/call-tool c "old_greet" {} {:timeout-ms 300})
+                                           (catch Exception e e))))))
+      (is (true? (deref stopped 3000 false)) "the backend's call ended, long before its 30 s timeout")
+      (finally (deliver never {"action" "cancel"}) (client/close c) (close!)))))
