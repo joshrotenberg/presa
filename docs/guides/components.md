@@ -50,7 +50,10 @@ against `:output-schema` with `presa.schema`, a dependency-free subset of
 JSON Schema (`type`, `enum`, `const`, `required`, `properties`,
 `additionalProperties`, `items`, the size and range keywords, `pattern`).
 Invalid arguments become an `isError` result naming the path, so the model
-can correct its call. `:validate? false` on the server turns this off.
+can correct its call. `:validate? false` on the server turns this off, and
+`:validator` replaces the validator: `presa.schema.networknt/validator`
+gives full 2020-12 validation on the JVM with
+`com.networknt/json-schema-validator` added.
 
 ## Resources and templates
 

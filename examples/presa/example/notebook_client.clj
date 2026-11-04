@@ -98,8 +98,9 @@
     @seen))
 
 (defn- bb-config []
-  ;; the bb.edn of this checkout, so the stdio server runs the same code
-  (str (.getCanonicalPath (io/file "bb.edn"))))
+  ;; the bb.edn this runs under (--config), else the one in the working
+  ;; directory, so the stdio server runs the same code
+  (str (.getCanonicalPath (io/file (or (System/getProperty "babashka.config") "bb.edn")))))
 
 (defn -main [& args]
   (let [[mode url] (remove #(str/starts-with? % "--") (take-while #(not= "--version" %) args))

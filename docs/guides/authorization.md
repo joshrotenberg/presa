@@ -77,8 +77,16 @@ a JWKS URL (`:jwks-url`, cached by `kid`) or static `:keys`, HS256 with a
 Handlers see the verified identity as `(:auth context)`, never the raw
 token. `:required-scopes` on the server hides a component from callers
 without its scopes and refuses calls to it with -32003, inside a 200 since
-the request itself was authenticated. `requestState` and tasks are scoped
-to the subject, so one caller cannot resume another's.
+the request itself was authenticated. The same scopes apply to completing a
+prompt's or template's arguments and to subscribing to a resource: a
+caller hears `resources/updated` only for what it may read.
+`:default-scopes` gives the scopes of components without an entry (default
+none). `requestState` and tasks are scoped to the subject, so one caller
+cannot resume another's, and an initialize-era HTTP session belongs to the
+subject that opened it.
+
+`presa.auth.jwt/verifier` requires `exp` in the tokens it accepts, as RFC
+9068 does for access tokens; `:require-exp? false` drops that.
 
 ```clojure
 (def token (jwt/sign {"sub" "ada" "aud" resource "scope" "mcp:read"
@@ -118,7 +126,7 @@ authorization server is never reused.
 The browser step is yours: an authorizer gets the authorization URL and
 returns the URL the authorization server redirected to.
 `loopback-authorizer` listens on 127.0.0.1 and calls your function to open
-a browser:
+a browser; `(:stop! authorizer)` closes the listener:
 
 <!-- no-run -->
 ```clojure
@@ -144,7 +152,8 @@ key with DPoP (RFC 9449): an ES256 key pair per provider, a proof in the
 `Authorization: DPoP` with a fresh proof that carries the token's hash.
 A `use_dpop_nonce` answer, from the authorization server or the MCP
 server, is retried once with the nonce it gave. `:dpop false` turns this
-off. `presa.auth.dpop` makes the proofs.
+off. `presa.auth.dpop` makes the proofs. DPoP is client-side only:
+`presa.auth` accepts bearer tokens and does not check DPoP proofs.
 
 Two more grants need no user. `:grant :jwt-bearer` with `:assertion`
 (RFC 7523) trades a JWT for a token, as workload identity federation does;
@@ -164,5 +173,7 @@ the flow found.
                                            :id-token id-token
                                            :client-id "idp-client"})})
 ```
-[docs/oauth-client.md](../oauth-client.md) is the reference; the
-conformance runner's 25 scored authorization scenarios pass.
+[docs/oauth-client.md](../oauth-client.md) is the reference. The
+conformance runner's scored authorization scenarios (25 at 2026-07-28, 14 at
+2025-11-25) and its DPoP, workload identity, enterprise-managed and client
+credentials extension scenarios pass.

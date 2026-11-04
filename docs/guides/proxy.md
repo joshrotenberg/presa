@@ -41,7 +41,8 @@ under a prefix, and its resources and templates under their own URIs.
 | log messages | the backend's messages about a call, through `server/log!`, so the caller's level applies (the proxy turns `:logging` on unless its options say otherwise) |
 | input from a 2026-07-28 backend | its `input_required` is passed to the caller; the backend's `requestState` rides in the proxy's signed state |
 | input from an initialize-era backend | the call is parked while the proxy asks the caller (below) |
-| list changes | a backend's list change resyncs the proxy and reaches the proxy's listeners |
+| list changes | a 2026-07-28 backend's list change resyncs the proxy and reaches the proxy's listeners; initialize-era backends are listed once, at start |
+| completion | argument completion for a backend's prompts and templates goes to that backend |
 
 The log message above reached the caller:
 
@@ -99,6 +100,10 @@ request fails at once.
   In-process and Streamable HTTP backends are matched: their messages
   carry the id of the request they were sent for.
 - Subscriptions to backend resources.
+- Cancellation: a call the caller cancels is not cancelled at the backend.
+
+`:separator` on a backend map replaces the `_` between its prefix and a
+name.
 
 ```clojure
 (client/close c)

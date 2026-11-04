@@ -11,7 +11,13 @@ current as the project changes.
 | `bb.edn` | Babashka tasks |
 | `.github/` | GitHub workflows and templates |
 | `src/` | Source |
-| `test/` | Tests |
+| `test/` | Tests, run under Babashka and the JVM (`test/presa/test_runner.clj` lists the namespaces) |
+| `test-jvm/` | JVM-only tests: full JSON Schema validation, the wire schema check |
+| `examples/` | The hello and notebook example servers, the notebook's client and REPL walkthroughs |
+| `docs/` | Guides (their Clojure blocks run as tests) and protocol reference |
+| `conformance/` | The official conformance runner's harness, fixture, baselines and vendored schema |
+| `dev/` | `lint.clj` (`bb lint`) and `host_probe.clj` (what real hosts send) |
+| `build.clj` | The jar and Clojars deploy (`clojure -T:build jar`) |
 | `.cj/` | cj project layer: the check recipe and config |
 
 ## Checks
@@ -23,9 +29,11 @@ fails, then checks the conventions below:
 - `bb test`
 - `bb jvm-test`
 
-CI runs those, `bb lint` (the conventions below, without cj) and the
-conformance lanes (`bb conformance <revision>`, each against
-`conformance/baselines/<revision>.json`; see `conformance/README.md`).
+CI runs those, `bb lint` (the conventions below, without cj), the jar
+build, the server conformance lanes (`bb conformance <revision>`, each against
+`conformance/baselines/<revision>.json`) and the client lanes
+(`bb conformance client <revision>`, against `client-<revision>.json`); see
+`conformance/README.md`.
 
 ## Conventions
 
@@ -37,13 +45,14 @@ The check enforces these:
   also passes). Merge commits are not checked.
 - Commit messages have no Co-Authored-By, Assisted-By or Generated-By
   trailers and no "Generated with" lines.
-- Tracked `*.md` `*.clj` `*.edn` `*.json` files have no em dashes.
+- Tracked `*.md` `*.clj` `*.edn` `*.json` files have no em dashes (vendored
+  files under `conformance/schema/` aside).
 
 ## Design rules
 
 These are not checked by `cj run check`; reviews hold changes to them.
 
-- Every namespace loads under Babashka and on the JVM from the same source. Runtime dependencies are limited to what Babashka bundles: `clojure.data.json` in the core, and http-kit for the HTTP transport.
+- Every namespace loads under Babashka and on the JVM from the same source, except `presa.schema.networknt`, which is JVM only and needs its own optional dependency. Runtime dependencies are limited to what Babashka bundles: `clojure.data.json` in the core, and http-kit for the HTTP transport.
 - MCP `2026-07-28` (stateless: `_meta` on each request, `server/discover`, `resultType`) comes first. Initialize-era revisions (`2025-11-25`, `2025-06-18`) are an opt-in layered on top, never the default path.
 - Protocol handling is pure functions over request and response maps with string keys; transports (stdio, Streamable HTTP) sit outside the core.
 - Reference designs: snodo (Elixir) and tower-mcp (Rust). Conformance is measured with the official MCP conformance runner, as snodo does.

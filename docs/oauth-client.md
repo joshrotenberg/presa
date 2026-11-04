@@ -2,7 +2,9 @@
 
 This is a working reference for the client side of MCP authorization as the
 official conformance runner's client leg tests it, written to guide an OAuth
-client in presa (joshrotenberg/presa#8). It assumes `docs/wire-2026-07-28.md`
+client in presa (joshrotenberg/presa#8). `presa.auth.client` now implements
+it, including DPoP and the JWT-bearer and enterprise-managed grants; the
+[authorization guide](guides/authorization.md) describes what it does. It assumes `docs/wire-2026-07-28.md`
 (cited as `wire §N`) and does not repeat it: request `_meta`, HTTP headers,
 `server/discover`, and how the runner launches the client (`wire §19.2`) are
 described there.
@@ -737,6 +739,11 @@ a `cause` naming the failed step (`oc:client.ex:111-115`,
 `oc:flow.ex:633-738`).
 
 ## 8. Hooking into presa
+
+This section is the design written before `presa.auth.client` existed. It
+describes presa as it was then (no token provider hook, no challenge
+parser, `jwt/sign` with a fixed `typ`), and its line references are to that
+code. The authorization guide describes the current behaviour.
 
 ### 8.1 Transport
 

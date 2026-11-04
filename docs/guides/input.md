@@ -45,7 +45,7 @@ handler runs again. presa:
   caller, with an expiry (`:state-ttl-ms`, default 300000). A changed,
   expired or misplaced token is -32602. `:state-secret` sets the key; the
   default is random per server map, so tokens do not survive a restart;
-- sends `ttlMs: 0` on a result that took input.
+- sends `ttlMs: 0` on a `resources/read` result that took input.
 
 Multi-round flows put what they need in the state:
 
@@ -102,5 +102,8 @@ A presa client answers with its `:handlers`, in both eras:
 (client/close old)
 ```
 
-A client without a handler for what the server asks gets ex-info with
-`:kind :unsupported`.
+A client that has no handler for a kind of input does not declare that
+capability, so the server refuses to ask: -32021 (ex-info `:kind :protocol`)
+on 2026-07-28, an `isError` result on initialize-era sessions. A client that
+declares a capability in `:capabilities` without a handler for it gets
+ex-info with `:kind :unsupported` when the server asks.

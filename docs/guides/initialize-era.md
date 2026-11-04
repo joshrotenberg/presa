@@ -31,10 +31,10 @@ it, else with the newest initialize-era one it serves. What differs from
 | | 2026-07-28 | initialize era |
 |---|---|---|
 | version and capabilities | in each request's `_meta` | once, in `initialize` |
-| `ping`, `logging/setLevel` | removed (-32601) | served |
+| `ping`, `logging/setLevel` | removed (-32601) | served (`logging/setLevel` with `:logging`) |
 | `resultType`, `ttlMs`, `cacheScope`, result `_meta.serverInfo` | on results | absent |
 | input from the client | `input_required` results | requests from server to client, inside the call |
-| subscriptions | `subscriptions/listen` | list changes always; `resources/subscribe` |
+| subscriptions | `subscriptions/listen` | list changes for the whole session with `:list-changed`; `resources/subscribe` with `:subscribe` |
 | tools whose schemas are not objects | listed | hidden, and refused |
 | HTTP errors | statuses by code | 200 |
 | HTTP session | none | `Mcp-Session-Id`, GET stream, DELETE |

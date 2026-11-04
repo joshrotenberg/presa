@@ -9,7 +9,9 @@ on either (`:mvn/version`, or `:git/tag` with its `:git/sha`).
 1. Merged pull requests land on `main` with conventional-commit subjects.
 2. `.github/workflows/release-please.yml` keeps a release pull request
    open, titled `chore(main): release X.Y.Z`, with the next version in
-   `version.txt`, the coordinates in `README.md`, and the changelog in
+   `version.txt`, the version in `README.md`'s coordinate block (other docs
+   show `0.1.0` as an example and are not updated), the version the client
+   reports in `presa.client`, and the changelog in
    `CHANGELOG.md`. Before 1.0, `feat` commits bump the minor version and
    `fix` commits the patch version.
 3. Merging that pull request tags `vX.Y.Z` on `main` and creates the GitHub
