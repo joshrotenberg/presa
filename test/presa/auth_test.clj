@@ -168,3 +168,44 @@
                              ["result" "content" 0 "text"])))
     (is (= -32602 (get-in (call "mallory" {"requestState" state "inputResponses" {"n" {"action" "accept" "content" {}}}})
                           ["error" "code"])))))
+
+(deftest posted-cancellation-is-scoped-to-the-subject
+  (let [rsa (rsa-pair)
+        started (atom 0)
+        interrupted (atom #{})
+        srv (server/server {:name "t" :version "1"
+                            :tools [{:name "block"
+                                     :handler (fn [{:strs [who]} _]
+                                                (swap! started inc)
+                                                (try (Thread/sleep 3000) "finished"
+                                                     (catch InterruptedException _
+                                                       (swap! interrupted conj who) "interrupted")))}]})
+        probe (http/serve! srv)
+        port (:port probe)
+        _ ((:stop! probe))
+        resource (str "http://127.0.0.1:" port "/mcp")
+        config (auth/resource-server {:resource resource
+                                      :verify (jwt/verifier {:audience resource :keys {"k" (.getPublic rsa)}})
+                                      :authorization-servers ["https://auth.example.com"]})
+        {:keys [url stop!]} (http/serve! srv {:port port :auth config :cancellation :subject})
+        bearer (fn [sub] (str "Bearer " (jwt/sign {"sub" sub "aud" resource "exp" (+ now 600)}
+                                                  {:alg "RS256" :kid "k" :key (.getPrivate rsa)})))
+        headers (fn [sub method] {"content-type" "application/json" "accept" "application/json, text/event-stream"
+                                  "mcp-protocol-version" "2026-07-28" "mcp-method" method
+                                  "authorization" (bearer sub)})
+        call (fn [sub who]
+               (future (http-send url "POST" (assoc (headers sub "tools/call") "mcp-name" "block")
+                                  (json/write-str {"jsonrpc" "2.0" "id" 7 "method" "tools/call"
+                                                   "params" {"name" "block" "arguments" {"who" who} "_meta" meta-2026}}))))
+        cancel (fn [sub]
+                 (http-send url "POST" (headers sub "notifications/cancelled")
+                            (json/write-str {"jsonrpc" "2.0" "method" "notifications/cancelled" "params" {"requestId" 7}})))]
+    (try
+      (let [ada (call "ada" "ada")
+            bob (call "bob" "bob")]
+        (loop [n 0] (when (and (< @started 2) (< n 200)) (Thread/sleep 10) (recur (inc n))))
+        (is (= 202 (:status (cancel "ada"))))
+        (is (= 204 (:status (deref ada 3000 nil))) "ada's request 7 was cancelled and answered with no body")
+        (is (= 200 (:status (deref bob 5000 nil))) "bob's request 7, same id, ran to the end")
+        (is (= #{"ada"} @interrupted)))
+      (finally (stop!)))))

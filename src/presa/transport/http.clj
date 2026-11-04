@@ -212,7 +212,7 @@
   "Run one request over an http-kit channel. session is a session entry
   (initialize-era) or nil (2026-07-28). on-session is called with the
   prepared result before the work starts, to register a new session."
-  [srv req message {:keys [session stateless? on-session headers log keepalive-ms identity]}]
+  [srv req message {:keys [session stateless? on-session headers log keepalive-ms identity running]}]
   (hk/as-channel
    req
    {:on-open
@@ -274,10 +274,12 @@
                          (log "failed to answer a request: " (ex-message e))
                          (try (hk/close ch) (catch Throwable _)))
                        (finally
-                         (when (and session (some? request-id))
-                           (swap! (:running session) dissoc request-id))))))]
-        (when (and session (some? request-id))
-          (swap! (:running session) assoc request-id {:cancel! cancel! :work work}))
+                         (when-let [[registry k] (and (some? request-id) running)]
+                           (swap! registry dissoc k))))))]
+        ;; running is [registry key]: where a posted notifications/cancelled
+        ;; can find this request
+        (when-let [[registry k] (and (some? request-id) running)]
+          (swap! registry assoc k {:cancel! cancel! :work work}))
         (when (= "subscriptions/listen" (get message "method"))
           ;; keep idle subscription streams open through proxies
           (future
@@ -332,20 +334,30 @@
   - :auth             a presa.auth/resource-server config: serve its
                       metadata document and require a bearer token on every
                       request; handlers see the identity as (:auth context)
+  - :cancellation     :subject to let a posted notifications/cancelled stop a
+                      2026-07-28 request of the same authenticated subject
+                      (needs :auth). Without it a posted cancel is ignored
+                      and only closing the connection cancels, since request
+                      ids are not unique across callers
   - :keepalive-ms     how often an idle subscription stream gets a comment,
                       which also finds clients that have gone (default 15000)
   - :log              (fn [& parts]) for diagnostics"
   ([srv] (handler srv {}))
-  ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms max-body-bytes]
+  ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms max-body-bytes cancellation]
          auth-config :auth
          :or {path "/mcp" log (fn [& _]) keepalive-ms 15000 max-body-bytes default-max-body-bytes}}]
-   (let [sessions (atom {})]
+   (let [sessions (atom {})
+         ;; 2026-07-28 requests in flight by [subject id], for :cancellation :subject
+         stateless-running (atom {})]
      (fn [req]
        (let [origin (header req "origin")
              sid (header req "mcp-session-id")
              authn (delay (when auth-config (auth/authenticate auth-config req)))
              caller (fn [] (:auth @authn))
              ;; an initialize-era session belongs to the subject that opened it
+             stateless-key (fn [message]
+                             (when-let [subject (and (= :subject cancellation) (:subject (caller)))]
+                               [stateless-running [subject (get message "id")]]))
              session-of (fn [sid]
                           (when-let [entry (get @sessions sid)]
                             (when (= (:subject entry) (:subject (caller))) entry)))]
@@ -414,9 +426,15 @@
                                                  :invalid-request "Invalid JSON-RPC 2.0 message")))
 
                  :notification
-                 (do (when-let [id (and session (= "notifications/cancelled" (get message "method"))
+                 (do (when-let [id (and (= "notifications/cancelled" (get message "method"))
                                         (get-in message ["params" "requestId"]))]
-                       (when-let [{:keys [cancel! work]} (get @(:running session) id)]
+                       (when-let [{:keys [cancel! work]}
+                                  (cond
+                                    session (get @(:running session) id)
+                                    ;; a 2026-07-28 request, only within the
+                                    ;; caller's own scope
+                                    (and (= :subject cancellation) (:subject (caller)))
+                                    (get @stateless-running [(:subject (caller)) id]))]
                          (cancel!)
                          (when work (future-cancel work))))
                      {:status 202})
@@ -428,7 +446,8 @@
                      (some? meta-version)
                      (or (check-stateless-headers req message)
                          (when (= "tools/call" method) (check-param-headers srv req message))
-                         (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)}))
+                         (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)
+                                                  :running (stateless-key message)}))
 
                      (= "initialize" method)
                      (let [id (str (UUID/randomUUID))
@@ -436,6 +455,7 @@
                        (execute srv req message
                                 {:session entry
                                  :identity (caller)
+                                 :running [(:running entry) (get message "id")]
                                  :log log
                                  :keepalive-ms keepalive-ms
                                  :headers {"mcp-session-id" id}
@@ -451,12 +471,14 @@
                        (if (and version (not= (str/trim version) (:version @(:session session))))
                          (json-response 400 (rpc/error (get message "id") :invalid-request
                                                        "MCP-Protocol-Version does not match the session"))
-                         (execute srv req message {:session session :log log :keepalive-ms keepalive-ms :identity (caller)})))
+                         (execute srv req message {:session session :log log :keepalive-ms keepalive-ms :identity (caller)
+                                                  :running [(:running session) (get message "id")]})))
 
                      ;; no _meta version and no session: let the server say
                      ;; what is missing
                      :else
-                     (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)}))))))))))))
+                     (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)
+                                                  :running (stateless-key message)}))))))))))))
 
 (defn serve!
   "Serve srv over HTTP. Options are `handler`'s plus :host (default
