@@ -12,7 +12,7 @@
 ;; PRESA_CONFORMANCE_RUNNER is the runner's dist/index.js
 ;; (@modelcontextprotocol/conformance@0.2.0-alpha.12); by default it is
 ;; taken from conformance/node_modules, then from a snodo checkout next to
-;; this one. Results land in tmp/conformance/<timestamp>/.
+;; this one. Results land in tmp/conformance/<lane>/<timestamp>/.
 ;;
 ;; A full run (no scenario) is compared with conformance/baselines/<revision>.json
 ;; (client-<revision>.json for the client leg),

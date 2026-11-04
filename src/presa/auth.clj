@@ -39,7 +39,9 @@
   (let [path (.getRawPath (URI. resource))]
     (str well-known (when-not (str/blank? path) path))))
 
-(defn metadata-url [resource]
+(defn metadata-url
+  "The absolute URL of resource's protected resource metadata document."
+  [resource]
   (let [u (URI. resource)]
     (str (.getScheme u) "://" (.getRawAuthority u) (metadata-path resource))))
 

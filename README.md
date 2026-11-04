@@ -1,5 +1,14 @@
 # presa
 
+[![ci](https://github.com/joshrotenberg/presa/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/joshrotenberg/presa/actions/workflows/ci.yml)
+[![conformance](https://github.com/joshrotenberg/presa/actions/workflows/conformance.yml/badge.svg?branch=main)](https://github.com/joshrotenberg/presa/actions/workflows/conformance.yml)
+[![conformance canary](https://github.com/joshrotenberg/presa/actions/workflows/canary.yml/badge.svg)](https://github.com/joshrotenberg/presa/actions/workflows/canary.yml)
+[![release](https://img.shields.io/github/v/release/joshrotenberg/presa?sort=semver)](https://github.com/joshrotenberg/presa/releases)
+[![MCP](https://img.shields.io/badge/MCP-2026--07--28-blue)](https://modelcontextprotocol.io)
+[![Babashka](https://img.shields.io/badge/babashka-1.13.225%2B-green)](https://babashka.org)
+[![JVM](https://img.shields.io/badge/JVM-21%20%7C%2025-green)](https://clojure.org)
+[![license](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+
 A Clojure library for building [Model Context Protocol](https://modelcontextprotocol.io)
 servers and clients, for Babashka and the JVM from the same source.
 
@@ -21,19 +30,22 @@ and each release is also a git tag (see [RELEASING.md](RELEASING.md)):
 ;; deps.edn or bb.edn, from Clojars
 {:deps {io.github.joshrotenberg/presa {:mvn/version "0.0.0"}}}
 
-;; or from the tag
+;; or from the tag; :git/sha is the tag's commit (see below)
 {:deps {io.github.joshrotenberg/presa {:git/tag "v0.0.0" :git/sha "..."}}}
 ```
 <!-- x-release-please-end -->
 
 `git ls-remote https://github.com/joshrotenberg/presa.git refs/tags/<tag>`
 gives the sha. Full JSON Schema validation on the JVM
-(`presa.schema.networknt`) also needs `com.networknt/json-schema-validator`,
-which presa does not pull in.
+(`presa.schema.networknt`) also needs
+`com.networknt/json-schema-validator {:mvn/version "3.0.0"}`, which presa does
+not pull in; pass `presa.schema.networknt/validator` as the server's
+`:validator`.
 
 ## Goals
 
-- **Babashka first.** Every namespace loads in Babashka and on the JVM. The core
+- **Babashka first.** Every namespace except the optional
+  `presa.schema.networknt` loads in Babashka and on the JVM. The core
   depends only on what Babashka bundles (`clojure.data.json`), and the HTTP
   transport on http-kit, which Babashka also bundles.
 - **Plain data.** Requests, responses, tools, resources and prompts are maps; a
@@ -50,11 +62,11 @@ which presa does not pull in.
 |---|---|
 | `presa.protocol` | spec revisions, `_meta` keys, error codes, log levels |
 | `presa.jsonrpc` | JSON-RPC 2.0 messages and newline framing |
-| `presa.server` | a server as data; dispatch for discovery, initialize, tools, resources, prompts, completion; pagination, caching hints, logging and progress from handlers |
+| `presa.server` | a server as data; dispatch for discovery, initialize, tools, resources, prompts, completion; input requests, subscriptions, the Tasks extension, scopes, changing a running server, pagination, caching hints, logging, progress and `:on-event` instrumentation |
 | `presa.content` | content blocks: text, image, audio, embedded resources, resource links |
 | `presa.uri-template` | `{var}` and `{+var}` URI templates for resource templates |
 | `presa.connection` | one client's connection to a server: session, concurrency, cancellation |
-| `presa.client` | calling a server: negotiation, requests, timeouts, progress and log callbacks |
+| `presa.client` | calling a server: negotiation, requests, timeouts, progress and log callbacks, input handlers, caching, `listen`, tasks, `tool-fns` |
 | `presa.transport.stdio` | stdio: serve a server, or start a server subprocess as a client |
 | `presa.input` | input requests (elicitation, sampling, roots) and the capabilities they need |
 | `presa.request-state` | signed `requestState` tokens for multi round-trip requests |
@@ -64,7 +76,8 @@ which presa does not pull in.
 | `presa.proxy` | one server in front of several MCP servers |
 | `presa.tasks` | the Tasks extension's task store and wire shapes |
 | `presa.auth`, `presa.auth.jwt` | OAuth 2.1 resource server: metadata, bearer challenges, JWT verification (RS256, ES256, HS256, JWKS) |
-| `presa.auth.client` | OAuth 2.1 client: discovery, registration, PKCE code flow, client credentials, step-up |
+| `presa.auth.client` | OAuth 2.1 client: discovery, registration, PKCE code flow, client credentials, JWT-bearer (workload identity) and enterprise-managed (`id-jag`) grants, DPoP, step-up |
+| `presa.auth.dpop` | DPoP (RFC 9449): ES256 key pairs and proof JWTs for the OAuth client |
 
 [docs/roadmap.md](docs/roadmap.md) lists what is done and what is next.
 
@@ -104,21 +117,25 @@ which presa does not pull in.
 | [Logging, progress and instrumentation](docs/guides/observability.md) | `log!`, `progress!`, `:on-event` |
 | [A complete example](docs/guides/example.md) | the notebook server, its REPL walkthrough and client, from a host |
 
-Every code block in the guides runs as part of the test suite.
+Every Clojure block in the guides that is not marked no-run runs as part of
+the test suite, and so does the notebook's REPL walkthrough.
 
 Reference: [docs/wire-2026-07-28.md](docs/wire-2026-07-28.md) (the
 revision on the wire), [docs/tasks-extension.md](docs/tasks-extension.md),
-[docs/hosts.md](docs/hosts.md) (what real hosts send),
+[docs/oauth-client.md](docs/oauth-client.md) (the client side of
+authorization), [docs/hosts.md](docs/hosts.md) (what real hosts send),
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Conformance
 
 [conformance/](conformance/README.md) runs the official MCP conformance
 runner against a fixture server and a client harness. All 37 required
-2026-07-28 server scenarios pass, as do the ten Tasks extension scenarios, the
-2025-11-25 and 2025-06-18 server suites, and every client scenario at
-2026-07-28 and 2025-11-25: the 25 scored authorization ones, and the DPoP,
-workload identity, enterprise-managed and client credentials extensions.
+2026-07-28 server scenarios pass, as do nine of the ten Tasks extension
+scenarios (the tenth, `tasks-status-notifications`, is a runner stub that
+always skips), the 2025-11-25 and 2025-06-18 server suites, and every client
+scenario at 2026-07-28 and 2025-11-25, including the scored authorization ones
+(25 and 14) and the DPoP, workload identity, enterprise-managed and client
+credentials extensions.
 
 ## The example servers
 
@@ -148,10 +165,12 @@ codex mcp add notebook -- bb --config /path/to/presa/bb.edn -m presa.example.not
 ## Development
 
 ```sh
-bb test          # tests under Babashka
-bb jvm-test      # the same tests on the JVM (clojure -M:test)
-bb conformance   # the official conformance runner against the fixture
-bb lint          # no em dashes, conventional commits since origin/main
+bb test                          # tests under Babashka
+bb jvm-test                      # the same tests on the JVM, plus the JVM-only schema tests (clojure -M:test)
+bb conformance 2026-07-28        # the conformance runner's server leg against the fixture, at a revision
+bb conformance client 2026-07-28 # its client leg against the client harness
+bb lint                          # no em dashes, conventional commits since origin/main
+clojure -T:build jar             # the jar a release deploys to Clojars
 ```
 
 ## License

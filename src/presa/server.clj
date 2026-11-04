@@ -237,8 +237,9 @@
         :request/rejected  :method :request-id :error-code, for a request
                            refused before it ran (bad _meta, unknown
                            method, and the like)
-        :tool/error        :tool :request-id :exception, for a handler that
-                           threw (the client gets an isError result)
+        :tool/error        :tool, :request-id (or :task-id for a task),
+                           :exception, for a handler that threw (the
+                           client gets an isError result)
       Exceptions the function throws are ignored.
   - :required-scopes  {[kind key] [scope ..]}, the scopes a component needs:
       kind is :tool, :prompt (keyed by name), :resource (by URI) or
@@ -1305,13 +1306,18 @@
   "The most progress notifications one request sends; later ones are dropped."
   1000)
 
-(def max-progress-message-bytes 4096)
+(def max-progress-message-bytes
+  "The longest progress message, in UTF-8 bytes; a longer update is dropped."
+  4096)
 
 (def max-log-messages
   "The most log messages one request sends; later ones are dropped."
   1000)
 
-(def max-log-data-bytes 16384)
+(def max-log-data-bytes
+  "The largest log message data, as JSON in UTF-8 bytes; a larger message is
+  dropped."
+  16384)
 
 (defn- utf8-length [^String s] (alength (.getBytes s "UTF-8")))
 

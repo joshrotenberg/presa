@@ -1,8 +1,9 @@
 # Transports
 
 presa's protocol handling is pure functions over request and response
-maps; transports carry them. `presa.connection` is what a transport builds
-on: one client's session, each request on its own thread, and cancellation.
+maps; transports carry them. `presa.connection` is what stdio and the
+in-process transport build on: one client's session, each request on its
+own thread, and cancellation. The HTTP server keeps sessions itself.
 
 ## stdio
 
@@ -69,19 +70,23 @@ Options of `handler` and `serve!`:
 | Option | Default | Meaning |
 |---|---|---|
 | `:host`, `:port` (`serve!` only) | `127.0.0.1`, 0 | where to listen |
+| `:path` | `/mcp` | the endpoint |
 | `:allowed-origins` | loopback only | a set or predicate of other origins to accept (403 otherwise; guards against DNS rebinding) |
 | `:allowed-hosts` | any | a set or predicate of `Host` values to accept |
 | `:max-body-bytes` | 2000000 | a larger body gets 413 |
 | `:keepalive-ms` | 15000 | comments on idle subscription streams, which also find clients that left |
 | `:auth` | none | a resource-server config; see [authorization.md](authorization.md) |
 | `:cancellation` | none | `:subject` lets a posted cancel stop the same subject's request |
+| `:log` | none | `(fn [& parts])` for diagnostics |
 
 `presa.transport.http/url` is the client transport. It mirrors the protocol
 headers (base64-wrapping values that are not plain ASCII), sends
 `Mcp-Param-*` for annotated arguments, leaves out tools whose annotations
 are invalid, keeps initialize-era sessions and their GET stream, and
 resumes a stream that ended early with `Last-Event-ID`. `:headers` adds
-headers to every request, such as `Authorization`.
+headers to every request, such as `Authorization`; `:token-provider` does
+OAuth (see [authorization.md](authorization.md)); `:connect-timeout-ms`
+(default 10000) and `:log` are the others.
 
 ## Initialize-era sessions
 

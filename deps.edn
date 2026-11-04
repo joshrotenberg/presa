@@ -10,6 +10,8 @@
                    :ns-default build}
            ;; full JSON Schema validation for presa.schema.networknt (JVM only)
            :schema-full {:extra-deps {com.networknt/json-schema-validator {:mvn/version "3.0.0"}}}
+           ;; a REPL with the examples: clojure -A:dev
+           :dev {:extra-paths ["examples"]}
            :example {:extra-paths ["examples"]
                      :main-opts ["-m" "presa.example.hello"]}
            :notebook {:extra-paths ["examples"]

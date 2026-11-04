@@ -304,7 +304,10 @@
                             (when cancel! (cancel!))
                             (future-cancel work))))))}))
 
-(def default-max-body-bytes 2000000)
+(def default-max-body-bytes
+  "The largest request body the server reads unless :max-body-bytes says
+  otherwise; a larger one gets 413."
+  2000000)
 
 (defn- read-body
   "The body as a string, or nil when it is longer than max-bytes."

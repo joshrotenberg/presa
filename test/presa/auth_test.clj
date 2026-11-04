@@ -41,7 +41,12 @@
       (is (= :invalid-token (:error (v (str (rs claims) "x")))))
       (is (= :invalid-token (:error (v "not.a.jwt"))))
       (is (= :invalid-token (:error (v (jwt/sign claims {:alg "HS256" :key (.getBytes "guess")}))))
-          "no HS256 secret configured"))
+          "no HS256 secret configured")
+      (is (= :invalid-token (:error (v (rs (dissoc claims "exp"))))) "a token without exp")
+      (is (= :invalid-token (:error (v (rs (assoc claims "exp" "never"))))) "an exp that is not a number"))
+    (testing ":require-exp? false accepts a token without exp"
+      (let [lenient (jwt/verifier {:audience aud :keys {"r" (.getPublic rsa)} :require-exp? false})]
+        (is (= "ada" (:subject (lenient (rs (dissoc claims "exp" "iss"))))))))
     (testing "JWK round trip"
       (is (= (seq (.getEncoded (jwt/jwk->public-key (jwt/public-key->jwk (.getPublic rsa)))))
              (seq (.getEncoded (.getPublic rsa)))))
@@ -58,7 +63,7 @@
                   {:port 0 :ip "127.0.0.1" :legacy-return-value? false})
         url (str "http://127.0.0.1:" (org.httpkit.server/server-port jwks-srv) "/jwks")
         v (jwt/verifier {:audience "x" :jwks-url url :refresh-ms 60000})
-        tok (fn [kid] (jwt/sign {"sub" "s" "aud" "x"} {:alg "RS256" :kid kid :key (.getPrivate rsa)}))]
+        tok (fn [kid] (jwt/sign {"sub" "s" "aud" "x" "exp" (+ now 600)} {:alg "RS256" :kid kid :key (.getPrivate rsa)}))]
     (try
       (is (= "s" (:subject (v (tok "k1")))))
       (is (= "s" (:subject (v (tok "k1")))))
@@ -209,3 +214,69 @@
         (is (= 200 (:status (deref bob 5000 nil))) "bob's request 7, same id, ran to the end")
         (is (= #{"ada"} @interrupted)))
       (finally (stop!)))))
+
+(deftest jwt-hs256-leeway-none-and-jwks-failure
+  (let [aud "https://mcp.example.com/mcp"
+        secret "a-shared-secret-of-adequate-length"
+        hs (fn [c key] (jwt/sign c {:alg "HS256" :key (.getBytes ^String key)}))
+        claims {"sub" "ada" "aud" aud "exp" (+ now 600)}
+        v (jwt/verifier {:audience aud :secret secret})]
+    (testing "HS256 secret"
+      (is (= "ada" (:subject (v (hs claims secret)))))
+      (is (= :invalid-token (:error (v (hs claims "the-wrong-secret-of-same-length!"))))))
+    (testing ":leeway-s admits a little skew and no more"
+      (let [lv (jwt/verifier {:audience aud :secret secret :leeway-s 30})
+            t (fn [extra] (lv (hs (merge claims extra) secret)))]
+        (is (= "ada" (:subject (t {"exp" (- (quot (System/currentTimeMillis) 1000) 5)}))) "just expired")
+        (is (= :expired (:error (t {"exp" (- (quot (System/currentTimeMillis) 1000) 120)}))) "expired beyond leeway")
+        (is (= "ada" (:subject (t {"nbf" (+ (quot (System/currentTimeMillis) 1000) 5)}))) "slightly future nbf")
+        (is (= :invalid-token (:error (t {"nbf" (+ (quot (System/currentTimeMillis) 1000) 120)}))) "nbf beyond leeway"))
+      (is (= :expired (:error (v (hs (assoc claims "exp" (- (quot (System/currentTimeMillis) 1000) 5)) secret))))
+          "no leeway by default"))
+    (testing "alg none is refused"
+      (let [enc #(jwt/b64 (.getBytes ^String % "UTF-8"))
+            none (str (enc "{\"alg\":\"none\"}") "." (enc (json/write-str claims)) ".")
+            none-sig (str (enc "{\"alg\":\"none\"}") "." (enc (json/write-str claims)) "." (enc "x"))]
+        (is (= :invalid-token (:error (v none))))
+        (is (= :invalid-token (:error (v none-sig))))))
+    (testing "a JWKS URL answering 500 refuses the token and does not throw"
+      (let [srv (org.httpkit.server/run-server (fn [_] {:status 500 :body "boom"})
+                                               {:port 0 :ip "127.0.0.1" :legacy-return-value? false})
+            url (str "http://127.0.0.1:" (org.httpkit.server/server-port srv) "/jwks")
+            jv (jwt/verifier {:audience aud :jwks-url url})
+            rsa (rsa-pair)]
+        (try
+          (is (= :invalid-token
+                 (:error (jv (jwt/sign claims {:alg "RS256" :kid "k" :key (.getPrivate rsa)})))))
+          (finally @(org.httpkit.server/server-stop! srv)))))))
+
+(deftest authenticate-challenge-and-metadata
+  (let [config (auth/resource-server {:resource "https://mcp.example.com/mcp"
+                                      :verify (fn [t] (if (= t "boom") (throw (ex-info "verifier broke" {})) {:subject "ada" :scopes []}))
+                                      :authorization-servers ["https://auth.example.com"]
+                                      :realm "mcp-realm"})
+        req (fn [h] {:request-method :post :headers (if h {"authorization" h} {})})]
+    (testing "two credentials in one header are a 400"
+      (let [r (:response (auth/authenticate config (req "Bearer abc, Bearer def")))]
+        (is (= 400 (:status r)))
+        (is (str/includes? (get-in r [:headers "www-authenticate"]) "error=\"invalid_request\""))))
+    (testing "a verifier that throws is a 401 invalid_token"
+      (let [r (:response (auth/authenticate config (req "Bearer boom")))]
+        (is (= 401 (:status r)))
+        (is (str/includes? (get-in r [:headers "www-authenticate"]) "error=\"invalid_token\""))
+        (is (= "invalid_token" (get (json/read-str (:body r)) "error")))))
+    (testing "a good token authenticates"
+      (is (= "ada" (get-in (auth/authenticate config (req "Bearer good")) [:auth :subject]))))
+    (testing "the realm is quoted in the challenge"
+      (is (str/starts-with? (auth/challenge config {}) "Bearer realm=\"mcp-realm\", "))
+      (is (str/starts-with? (get-in (:response (auth/authenticate config (req nil))) [:headers "www-authenticate"])
+                            "Bearer realm=\"mcp-realm\"")))
+    (testing "the metadata path answers GET and HEAD and refuses POST"
+      (let [get-r (auth/metadata-response config {:request-method :get})
+            head-r (auth/metadata-response config {:request-method :head})
+            post-r (auth/metadata-response config {:request-method :post})]
+        (is (= 200 (:status get-r)))
+        (is (= "https://mcp.example.com/mcp" (get (json/read-str (:body get-r)) "resource")))
+        (is (= [200 ""] [(:status head-r) (:body head-r)]))
+        (is (= 405 (:status post-r)))
+        (is (= "GET, HEAD" (get-in post-r [:headers "allow"])))))))

@@ -3,7 +3,7 @@
   with the examples on the classpath, under Babashka or the JVM:
 
       bb --config /path/to/presa/bb.edn nrepl-server
-      clojure -A:example        (or your editor's jack-in with that alias)
+      clojure -A:dev            (or your editor's jack-in with that alias)
 
   then evaluate the forms in the comment block below one at a time. Each
   `;; =>` line is the result the form before it returns; the guides test

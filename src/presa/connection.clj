@@ -1,9 +1,9 @@
 (ns presa.connection
   "One client's connection to a presa.server, independent of the transport:
   it keeps the session, runs each request on its own thread, and cancels
-  requests on notifications/cancelled. stdio, HTTP and the in-process client
+  requests on notifications/cancelled. stdio and the in-process client
   transport feed it messages and give it a function that sends messages
-  back."
+  back; the HTTP server keeps its sessions itself."
   (:require [presa.jsonrpc :as rpc]
             [presa.server :as server]))
 

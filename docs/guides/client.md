@@ -31,7 +31,10 @@
 
 `connect` tries `server/discover` first. When the server does not answer as
 a 2026-07-28 server, it falls back to `initialize` with the newest
-initialize-era revision the client allows (`:versions`).
+initialize-era revision the client allows (`:versions`). Other `connect`
+options: `:client-info` (what the client calls itself), `:capabilities`,
+`:probe-timeout-ms` (how long to wait for `server/discover`, default
+10000) and `:on-notification` (every notification the server sends).
 
 ```clojure
 (def c (client/connect (client/in-process srv)))
@@ -80,8 +83,10 @@ log messages at that level and above, delivered to `:on-log`; on an
 initialize-era connection use `set-log-level`. `:on-log` on a request
 takes that request's log messages in place of the client's, and
 `:handlers` on a request answer what the server asks while it runs, over
-the client's; both need a transport that can tell which request a message
-was sent for (in-process and HTTP can, stdio cannot). `:timeout-ms` bounds a
+the client's. `:on-log`, and requests from initialize-era servers, reach a
+request's functions only when the transport can tell which request a
+message was sent for (in-process and HTTP can, stdio cannot); 2026-07-28
+input requests always do. `:timeout-ms` bounds a
 request (default 60000); a timeout sends `notifications/cancelled` so the
 server stops the work.
 

@@ -236,3 +236,25 @@
           (is (= ["initialize" "notifications/initialized" "GET" "tools/list"] @order))
           (finally (client/close c))))
       (finally (hk/server-stop! server)))))
+
+(deftest origin-checks
+  (let [body (request 1 "tools/list" {})
+        status (fn [s origin] (:status (post (:url s) body {"origin" origin})))]
+    (testing ":allowed-origins as a predicate"
+      (with-server [s {:allowed-origins #(= % "https://app.example.com")}]
+        (is (= 200 (status s "https://app.example.com")))
+        (is (= 403 (status s "https://other.example.com")))))
+    (testing "Origin: null is refused, with and without an allow list"
+      (with-server [s {}]
+        (is (= 403 (status s "null"))))
+      (with-server [s {:allowed-origins #{"https://app.example.com"}}]
+        (is (= 403 (status s "null")))))
+    (testing "an origin with userinfo is not loopback"
+      (with-server [s {}]
+        (is (= 403 (status s "http://localhost@evil.example")))
+        (is (= 403 (status s "http://127.0.0.1:80@evil.example")))))
+    (testing "loopback origins are accepted without configuration"
+      (with-server [s {}]
+        (is (= 200 (status s "http://localhost")))
+        (is (= 200 (status s (str "http://127.0.0.1:" (:port s)))))
+        (is (= 200 (status s (str "http://[::1]:" (:port s)))))))))

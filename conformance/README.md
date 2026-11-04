@@ -12,7 +12,8 @@ frozen 2026-07-28 requirement set: 37 required server scenarios.
 - `run.clj` starts the fixture under Babashka, runs the runner's server leg
   against it (or the client leg against the harness), and prints each
   scenario's checks. Raw results land in
-  `tmp/conformance/<timestamp>/`.
+  `tmp/conformance/<lane>/<timestamp>/`, where the lane is the revision or
+  `client-<revision>`.
 
 ```sh
 (cd conformance && npm ci --ignore-scripts)   # or set PRESA_CONFORMANCE_RUNNER
@@ -20,6 +21,7 @@ bb conformance                                # 2026-07-28, against its baseline
 bb conformance 2025-11-25                     # another lane
 bb conformance 2026-07-28 tools-list          # one scenario, no baseline check
 bb conformance 2026-07-28 --update-baseline   # record a new baseline
+bb conformance client 2026-07-28              # the client leg, against baselines/client-2026-07-28.json
 ```
 
 ## Baselines
@@ -33,9 +35,10 @@ that started passing. A baseline therefore changes only through
 
 ## CI
 
-`.github/workflows/conformance.yml` runs the three lanes on every pull
-request and push to main, each against its baseline, and keeps the runner's
-raw results as an artifact. `canary.yml` runs the same lanes weekly against
+`.github/workflows/conformance.yml` runs the three server lanes and the two
+client lanes on every pull request and push to main, each against its
+baseline, and keeps the runner's raw results as an artifact. `canary.yml`
+runs the three server lanes weekly against
 the runner's `alpha` dist-tag (`PRESA_CONFORMANCE_UNPINNED=1`) without
 gating anything, to show what a newer runner would change.
 
@@ -49,7 +52,7 @@ runner's `dist/index.js`).
 |---|---|---|
 | Required (37) | 37 with no FAILURE, WARNING or SKIPPED check | `server-stateless`: 30 of 30, including the `subscriptions/listen` checks |
 | Pending, unscored (3) | `http-header-validation`, `http-custom-header-server-validation`, `json-schema-2020-12` pass | |
-| Tasks extension, unscored (10) | 9 pass, 1 skipped | the skipped one, `tasks-status-notifications`, is a runner stub that always skips |
+| Tasks extension, unscored (10) | 9 pass, 1 skipped | the skipped one, `tasks-status-notifications`, is a runner stub that always skips; presa sends `notifications/tasks` (see docs/guides/tasks.md) and its own tests cover them |
 
 Totals over all 50 scenarios run: 196 SUCCESS, 0 FAILURE, 1 SKIPPED (the
 Tasks notification stub), 1 INFO (`server-sse-multiple-streams`: every

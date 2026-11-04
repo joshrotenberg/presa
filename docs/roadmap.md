@@ -52,7 +52,7 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 - [x] Answering `input_required` with caller-supplied elicitation, sampling and
       roots functions
 - [x] Turning a server's tools into functions
-- [ ] The runner's client leg: joshrotenberg/presa#5
+- [x] The runner's client leg, at 2026-07-28 and 2025-11-25
 
 ## 6. Done since
 
@@ -70,6 +70,13 @@ client, runtime catalogs, limits, the session event stream, client
 caching, full JSON Schema validation, initialize-era schema rules,
 notification checks, scoped cancellation, instrumentation, the proxy,
 the guides, the release process, lint prefixes and the wire schema check.
+
+The second (joshrotenberg/presa#42 to joshrotenberg/presa#50) is done too:
+DPoP, the JWT-bearer and enterprise-managed grants, task status
+notifications on `subscriptions/listen`, proxy log and input forwarding,
+the notebook example, and a fix for a client lane flake. Before the first
+release, scope checks were extended to completion and resource
+subscriptions, and the JWT verifier was made to require `exp`.
 
 Open work is filed as issues, labelled by priority and area:
 <https://github.com/joshrotenberg/presa/issues>. At the time of writing:

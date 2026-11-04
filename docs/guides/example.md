@@ -55,7 +55,8 @@ with it:
 completion, prompts, sampling, elicitation, an export as a task and as a
 synchronous call with progress, and changing the server while clients are
 connected. Start a REPL with the examples on the classpath
-(`bb --config /path/to/presa/bb.edn nrepl-server`, or `clojure -A:example`)
+(`bb --config /path/to/presa/bb.edn nrepl-server`, or `clojure -A:dev` in
+the presa checkout)
 and evaluate its forms one at a time.
 
 ## From the command line
@@ -66,10 +67,10 @@ connects to one that is already serving. `--version` picks a revision.
 
 <!-- no-run -->
 ```sh
-bb -m presa.example.notebook-client
-bb -m presa.example.notebook-client stdio --version 2025-06-18
-bb -m presa.example.notebook --http 8080 &
-bb -m presa.example.notebook-client http http://127.0.0.1:8080/mcp
+bb --config /path/to/presa/bb.edn -m presa.example.notebook-client
+bb --config /path/to/presa/bb.edn -m presa.example.notebook-client stdio --version 2025-06-18
+bb --config /path/to/presa/bb.edn -m presa.example.notebook --http 8080 &
+bb --config /path/to/presa/bb.edn -m presa.example.notebook-client http http://127.0.0.1:8080/mcp
 ```
 
 ## From a host

@@ -7,11 +7,13 @@ registers it with Claude Code and Codex.
 
 ## Depend on presa
 
-presa is released as git tags; see [RELEASING.md](../../RELEASING.md) for
-the coordinates. In `bb.edn` or `deps.edn`:
+presa is on Clojars, and each release is also a git tag; see
+[RELEASING.md](../../RELEASING.md). In `bb.edn` or `deps.edn`, for example:
 
 <!-- no-run -->
 ```clojure
+{:deps {io.github.joshrotenberg/presa {:mvn/version "0.1.0"}}}
+;; or
 {:deps {io.github.joshrotenberg/presa {:git/tag "v0.1.0" :git/sha "<the tag's sha>"}}}
 ```
 

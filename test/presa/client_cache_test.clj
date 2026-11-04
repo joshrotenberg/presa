@@ -35,8 +35,12 @@
           (deref (:acknowledged sub) 2000 nil)
           (is (= "read 2" (text c "file:///a")))
           (server/resource-updated! srv "file:///a")
-          (Thread/sleep 100)
-          (is (= "read 5" (text c "file:///a")))
+          ;; the invalidation arrives asynchronously: poll for the refetch
+          (is (= "read 5" (loop [n 0]
+                            (let [t (text c "file:///a")]
+                              (if (and (= "read 2" t) (< n 500))
+                                (do (Thread/sleep 10) (recur (inc n)))
+                                t)))))
           ((:stop! sub))))
       (client/clear-cache! c)
       (is (= "read 6" (text c "file:///a")))
@@ -57,11 +61,17 @@
       (finally (client/close c)))))
 
 (deftest expiry
-  (let [[srv _] (counting-server 50)
+  (let [ttl 300
+        [srv _] (counting-server ttl)
         c (client/connect (client/in-process srv) {:cache true})]
     (try
-      (is (= "read 1" (text c "file:///a")))
-      (is (= "read 1" (text c "file:///a")))
-      (Thread/sleep 80)
+      (let [start (System/currentTimeMillis)]
+        (is (= "read 1" (text c "file:///a")))
+        (is (= "read 1" (text c "file:///a")))
+        ;; wait past the TTL, measured from before the first read
+        (loop [n 0]
+          (when (and (<= (System/currentTimeMillis) (+ start ttl 20)) (< n 1000))
+            (Thread/sleep 10)
+            (recur (inc n)))))
       (is (= "read 2" (text c "file:///a")))
       (finally (client/close c)))))

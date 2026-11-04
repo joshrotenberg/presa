@@ -30,8 +30,10 @@
 
 (defn- auth-server
   "A small authorization server: metadata, DCR, authorize (redirects at
-  once), token (a signed JWT). iss-mode is :correct, :wrong or :omit."
-  [keypair resource {:keys [iss-mode] :or {iss-mode :correct}}]
+  once), token (a signed JWT). iss-mode is :correct, :wrong or :omit;
+  state-mode is :correct or :wrong (the state echoed on the redirect);
+  methods is the advertised code_challenge_methods_supported."
+  [keypair resource {:keys [iss-mode state-mode methods] :or {iss-mode :correct state-mode :correct methods ["S256"]}}]
   (let [port (promise)
         seen (atom [])
         ;; the scope an authorization request asked for, for its token
@@ -47,7 +49,7 @@
                                               "authorization_endpoint" (str (issuer) "/authorize")
                                               "token_endpoint" (str (issuer) "/token")
                                               "registration_endpoint" (str (issuer) "/register")
-                                              "code_challenge_methods_supported" ["S256"]
+                                              "code_challenge_methods_supported" methods
                                               "authorization_response_iss_parameter_supported" true
                                               "token_endpoint_auth_methods_supported" ["client_secret_basic"]})}
                       "/register"
@@ -58,7 +60,7 @@
                             _ (reset! last-scope (get q "scope"))
                             iss (case iss-mode :correct (issuer) :wrong "https://evil.example.com" :omit nil)]
                         {:status 302
-                         :headers {"location" (str (get q "redirect_uri") "?code=c1&state=" (get q "state")
+                         :headers {"location" (str (get q "redirect_uri") "?code=c1&state=" (if (= state-mode :wrong) "forged" (get q "state"))
                                                    (when iss (str "&iss=" (java.net.URLEncoder/encode iss "UTF-8"))))}})
                       "/token"
                       (let [f (form body)]
@@ -130,6 +132,32 @@
                      (catch Exception e e))]
           (is (= -32000 (:code (ex-data e))) (str mode))
           (is (not-any? #{[:post "/token"]} @(:seen as)) (str mode ": no token request")))
+        (finally ((:stop! rs)) ((:stop! as)))))))
+
+(deftest state-mismatch-and-pkce-support
+  (testing "a mismatched state is refused and no token request is made"
+    (let [kp (rsa)
+          as (auth-server kp nil {:state-mode :wrong})
+          rs (protected-server (:issuer as) kp)]
+      (try
+        (let [e (try (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs)
+                                                                                            :authorizer (oauth/redirect-reader)})}))
+                     (catch Exception e e))]
+          (is (= -32000 (:code (ex-data e))))
+          (is (some #{[:get "/authorize"]} @(:seen as)) "the authorization request was made")
+          (is (not-any? #{[:post "/token"]} @(:seen as)) "no token request"))
+        (finally ((:stop! rs)) ((:stop! as))))))
+  (testing "metadata without S256 is refused before the authorization request"
+    (let [kp (rsa)
+          as (auth-server kp nil {:methods ["plain"]})
+          rs (protected-server (:issuer as) kp)]
+      (try
+        (let [e (try (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs)
+                                                                                            :authorizer (oauth/redirect-reader)})}))
+                     (catch Exception e e))]
+          (is (= -32000 (:code (ex-data e))))
+          (is (not-any? #{[:get "/authorize"] [:post "/token"]} @(:seen as))
+              "neither an authorization nor a token request"))
         (finally ((:stop! rs)) ((:stop! as)))))))
 
 (deftest client-credentials
