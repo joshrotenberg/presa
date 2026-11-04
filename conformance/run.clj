@@ -1,7 +1,8 @@
-;; Run the official MCP conformance runner's server leg against presa's
-;; fixture and summarize the result.
+;; Run the official MCP conformance runner against presa and summarize the
+;; result: the server leg against the fixture, or with `client` the client
+;; leg, where the runner's own scenario servers drive presa.conformance.client.
 ;;
-;;   bb conformance/run.clj [revision] [scenario] [--update-baseline]
+;;   bb conformance/run.clj [client] [revision] [scenario] [--update-baseline]
 ;;
 ;; revision is 2026-07-28 (the default), 2025-11-25 or 2025-06-18. The
 ;; first two run the runner's frozen requirement set for that revision; for
@@ -13,7 +14,8 @@
 ;; taken from conformance/node_modules, then from a snodo checkout next to
 ;; this one. Results land in tmp/conformance/<timestamp>/.
 ;;
-;; A full run (no scenario) is compared with conformance/baselines/<revision>.json,
+;; A full run (no scenario) is compared with conformance/baselines/<revision>.json
+;; (client-<revision>.json for the client leg),
 ;; which records the status of every check of every scenario. Any difference
 ;; fails the run, including a check that starts passing, so a baseline only
 ;; changes in review: --update-baseline rewrites it from the run.
@@ -44,43 +46,55 @@
 (def flags (set (filter #(str/starts-with? % "--") *command-line-args*)))
 (def positional (remove #(str/starts-with? % "--") *command-line-args*))
 (def revision (or (some #(re-matches #"\d{4}-\d{2}-\d{2}" %) positional) "2026-07-28"))
-(def scenario (first (remove #(re-matches #"\d{4}-\d{2}-\d{2}" %) positional)))
+(def leg (if (some #{"client"} positional) "client" "server"))
+(def scenario (first (remove #(or (re-matches #"\d{4}-\d{2}-\d{2}" %) (= "client" %)) positional)))
 (def frozen? (contains? #{"2026-07-28" "2025-11-25"} revision))
-(def out-dir (str (fs/path root "tmp/conformance" revision
+(def lane (if (= "client" leg) (str "client-" revision) revision))
+(def out-dir (str (fs/path root "tmp/conformance" lane
                            (str/replace (str (java.time.Instant/now)) #"[:.]" "-"))))
 (fs/create-dirs out-dir)
 
-(def fixture
-  (p/process {:dir root
-              :extra-env {"MCP_PORT" "0" "MCP_FIXTURE_PROFILE" (if (= "2026-07-28" revision) "latest" "legacy")}
-              :err :inherit}
-             "bb" "-cp" "src:conformance" "-m" "presa.conformance.fixture"))
+(defn- run-runner [args env]
+  (let [result @(apply p/process {:dir root :out :string :err :string :extra-env env} "node" runner args)]
+    (spit (str (fs/path out-dir "runner.log")) (str (:out result) "\n" (:err result)))
+    result))
 
-(def url
-  (let [r (io/reader (:out fixture))
-        line (deref (future (.readLine ^java.io.BufferedReader r)) 30000 nil)
-        ready (when line (json/parse-string line))]
-    (when-not (get ready "conformanceReady")
-      (p/destroy fixture)
-      (throw (ex-info (str "The fixture did not start: " line) {})))
-    (get ready "url")))
+(defn- selection []
+  (cond
+    scenario ["--scenario" scenario "--spec-version" revision]
+    frozen? ["--requirements" revision]
+    :else ["--spec-version" revision "--suite" "active"]))
 
-(println "fixture at" url "for" revision "with runner" runner-version)
-
-(let [args (cond-> ["node" runner "server" "--url" url "--output-dir" out-dir]
-             scenario (into ["--scenario" scenario "--spec-version" revision])
-             (and (not scenario) frozen?) (into ["--requirements" revision])
-             (and (not scenario) (not frozen?)) (into ["--spec-version" revision "--suite" "active"]))
-      result @(apply p/process {:dir root :out :string :err :string} args)]
-  (spit (str (fs/path out-dir "runner.log")) (str (:out result) "\n" (:err result)))
-  (.close ^java.io.OutputStream (:in fixture))
-  (deref fixture 5000 nil)
-  (p/destroy fixture))
+(if (= "client" leg)
+  (do (println "client leg for" revision "with runner" runner-version)
+      (run-runner (concat ["client" "--command" "bb -cp src:conformance -m presa.conformance.client"
+                           "--output-dir" out-dir]
+                          (selection))
+                  {"PRESA_CLIENT_PROTOCOL" revision}))
+  (let [fixture (p/process {:dir root
+                            :extra-env {"MCP_PORT" "0" "MCP_FIXTURE_PROFILE" (if (= "2026-07-28" revision) "latest" "legacy")}
+                            :err :inherit}
+                           "bb" "-cp" "src:conformance" "-m" "presa.conformance.fixture")
+        url (let [r (io/reader (:out fixture))
+                  line (deref (future (.readLine ^java.io.BufferedReader r)) 30000 nil)
+                  ready (when line (json/parse-string line))]
+              (when-not (get ready "conformanceReady")
+                (p/destroy fixture)
+                (throw (ex-info (str "The fixture did not start: " line) {})))
+              (get ready "url"))]
+    (println "fixture at" url "for" revision "with runner" runner-version)
+    (run-runner (concat ["server" "--url" url "--output-dir" out-dir] (selection)) {})
+    (.close ^java.io.OutputStream (:in fixture))
+    (deref fixture 5000 nil)
+    (p/destroy fixture)))
 
 (def checks
   (for [f (fs/glob out-dir "**/checks.json")
-        :let [dir (str (fs/file-name (fs/parent f)))
-              name (second (re-matches #"server-(.+)-\d{4}-\d{2}-\d{2}T.*" dir))]
+        :let [dir (str (fs/relativize out-dir (fs/parent f)))
+              name (second (re-matches (if (= "client" leg)
+                                         #"(.+)-\d{4}-\d{2}-\d{2}T.*"
+                                         #"server-(.+)-\d{4}-\d{2}-\d{2}T.*")
+                                       dir))]
         check (json/parse-string (slurp (str f)))]
     (assoc check "scenario" name)))
 
@@ -115,7 +129,7 @@
                         (group-by #(get % "id") cs))]))
         by-scenario))
 
-(def baseline-file (str (fs/path root "conformance/baselines" (str revision ".json"))))
+(def baseline-file (str (fs/path root "conformance/baselines" (str lane ".json"))))
 
 (defn- differences [expected actual]
   (for [s (sort (set (concat (keys expected) (keys actual))))

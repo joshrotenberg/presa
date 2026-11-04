@@ -208,17 +208,28 @@
   "The server/discover result when the server answers as a 2026-07-28
   server, else nil."
   [client]
-  (let [response (try (send-request client "server/discover" {}
-                                    {:stateless? true
-                                     :timeout-ms (get-in client [:opts :probe-timeout-ms] 10000)})
-                      (catch clojure.lang.ExceptionInfo e
-                        (when-not (= :timeout (:kind (ex-data e))) (throw e))
-                        nil))
-        result (get response "result")]
-    (when (and (map? result)
-               (sequential? (get result "supportedVersions"))
-               (some #{protocol/latest-version} (get result "supportedVersions")))
-      result)))
+  (loop [attempt 1]
+    (let [response (try (send-request client "server/discover" {}
+                                      {:stateless? true
+                                       :timeout-ms (get-in client [:opts :probe-timeout-ms] 10000)})
+                        (catch clojure.lang.ExceptionInfo e
+                          (when-not (= :timeout (:kind (ex-data e))) (throw e))
+                          nil))
+          result (get response "result")
+          error (get response "error")]
+      (cond
+        (and (map? result)
+             (sequential? (get result "supportedVersions"))
+             (some #{protocol/latest-version} (get result "supportedVersions")))
+        result
+
+        ;; -32022 naming a revision this client speaks: ask again with it
+        (and (= -32022 (get error "code"))
+             (some #{protocol/latest-version} (get-in error ["data" "supported"]))
+             (< attempt 3))
+        (recur (inc attempt))
+
+        :else nil))))
 
 (defn- initialize! [client versions]
   (let [requested (first versions)

@@ -189,3 +189,18 @@
     (is (nil? (:cancel (server/prepare stateless {} {"jsonrpc" "2.0" "method" "notifications/cancelled" "params" [7]}))))
     (testing "and get no answer either way"
       (is (nil? ((:respond (server/prepare stateless {} (rpc/notification "notifications/cancelled" {"requestId" 7 "_meta" "x"})))))))))
+(deftest initialize-era-clients-see-only-object-schemas
+  (let [srv (server/server {:name "t" :version "1" :versions protocol/versions
+                            :tools [{:name "plain" :handler (fn [_ _] "ok")}
+                                    {:name "list-out" :output-schema {"type" "array"} :handler (fn [_ _] "[]")}
+                                    {:name "union-in" :input-schema {"anyOf" [{"type" "object"} {"type" "string"}]}
+                                     :handler (fn [_ _] "ok")}]})
+        [session] (server/handle srv {} (rpc/request 0 "initialize" {"protocolVersion" "2025-11-25" "capabilities" {}
+                                                                     "clientInfo" {"name" "c" "version" "0"}}))
+        legacy (fn [m] (second (server/handle srv session m)))]
+    (is (= ["plain"] (map #(get % "name") (get-in (legacy (rpc/request 1 "tools/list")) ["result" "tools"]))))
+    (is (= {"code" -32602 "message" "Unknown tool: list-out"}
+           (get (legacy (rpc/request 2 "tools/call" {"name" "list-out"})) "error")))
+    (testing "2026-07-28 clients see every tool"
+      (is (= ["plain" "list-out" "union-in"]
+             (map #(get % "name") (get-in (respond srv (req 3 "tools/list")) ["result" "tools"])))))))

@@ -25,7 +25,8 @@
 (def base (or (first *command-line-args*) "origin/main"))
 (def base? (zero? (:exit (p/shell {:out :string :err :string :continue true} "git" "rev-parse" "--verify" "--quiet" base))))
 
-(def prefix #"^(feat|fix|docs|test|refactor|chore)(\([^)]+\))?!?: .+")
+;; the same rule as clajent.checks/conventional-subject, which cj run check uses
+(def prefix #"^(?:(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)\s]+\))?!?: \S|Revert \").*")
 (def attribution #"(?im)^\s*(co-authored-by|assisted-by|generated-by):|generated with")
 
 (def commit-problems
