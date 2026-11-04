@@ -453,13 +453,29 @@
                                                  requests))
                    (inc round))))))))
 
-(defn- tools-list [srv params _context]
-  (paged srv "tools/list" params "tools" (map (comp wire-tool (:tools srv)) (:tool-order srv))))
+(defn- object-schema? [schema]
+  (and (map? schema) (= "object" (get schema "type"))))
+
+(defn- era-tool?
+  "Whether the revision of context can carry tool: initialize-era revisions
+  require object schemas for inputSchema and outputSchema, which
+  2026-07-28 does not."
+  [context tool]
+  (or (protocol/stateless? (:version context))
+      (and (or (nil? (:input-schema tool)) (object-schema? (:input-schema tool)))
+           (or (nil? (:output-schema tool)) (object-schema? (:output-schema tool))))))
+
+(defn- tools-list [srv params context]
+  (paged srv "tools/list" params "tools"
+         (->> (:tool-order srv)
+              (map (:tools srv))
+              (filter #(era-tool? context %))
+              (map wire-tool))))
 
 (defn- tools-call [srv params context]
   (let [tool-name (required-name params "name" "tools/call")
         arguments (arguments-map params "arguments" "tools/call")
-        tool (or (get-in srv [:tools tool-name])
+        tool (or (let [t (get-in srv [:tools tool-name])] (when (and t (era-tool? context t)) t))
                  (throw (error :invalid-params (str "Unknown tool: " tool-name))))]
     (if-let [invalid (and (:validate? srv) (:input-schema tool)
                           (schema/validate arguments (:input-schema tool)))]
