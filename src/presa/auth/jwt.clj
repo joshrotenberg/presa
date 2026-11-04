@@ -21,7 +21,10 @@
 ;; base64url and DER
 
 (defn- unb64 ^bytes [^String s] (.decode (Base64/getUrlDecoder) s))
-(defn b64 [^bytes b] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
+(defn b64
+  "bytes as unpadded base64url."
+  [^bytes b]
+  (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
 
 (defn- der-length [n]
   (if (< n 128)

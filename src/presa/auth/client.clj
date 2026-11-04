@@ -7,7 +7,10 @@
   RFC 7591), runs the authorization code flow with PKCE (RFC 7636) and the
   resource indicator (RFC 8707), checks the authorization response's iss
   (RFC 9207), and exchanges the code for a token; or runs the client
-  credentials grant. See docs/oauth-client.md; follows snodo_oauth's client.
+  credentials grant, or the JWT-bearer grant (RFC 7523, with `id-jag` for
+  enterprise-managed authorization). It binds tokens with DPoP (RFC 9449)
+  when the authorization server takes ES256 proofs. See docs/oauth-client.md
+  and docs/guides/authorization.md; follows snodo_oauth's client.
 
   The browser step is a function the application supplies (:authorizer):
   it gets the authorization URL and returns the URL the authorization server
@@ -544,7 +547,8 @@
   "An authorizer for the code flow: a listener on 127.0.0.1 (a free port, or
   :port) that receives the redirect at /callback. open-url is called with the
   authorization URL (open a browser there). Waits up to :timeout-ms (default
-  300000) for the redirect."
+  300000) for the redirect. Returns {:redirect-uri :authorize :stop!};
+  (stop!) closes the listener."
   ([open-url] (loopback-authorizer open-url {}))
   ([open-url {:keys [port timeout-ms] :or {port 0 timeout-ms 300000}}]
    (let [result (atom (promise))

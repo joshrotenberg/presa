@@ -14,9 +14,13 @@
            (java.time Instant)
            (java.util Base64)))
 
-(def extension "io.modelcontextprotocol/tasks")
+(def extension
+  "The Tasks extension's id in capabilities."
+  "io.modelcontextprotocol/tasks")
 
-(def terminal #{"completed" "failed" "cancelled"})
+(def terminal
+  "The statuses a task never leaves."
+  #{"completed" "failed" "cancelled"})
 
 (defn declared?
   "Whether a request's client capabilities declare the Tasks extension."

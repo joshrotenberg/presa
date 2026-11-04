@@ -16,7 +16,9 @@
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)))
 
-(def max-token-length 16384)
+(def max-token-length
+  "The longest requestState token verify accepts, in characters."
+  16384)
 
 (defn random-secret
   "32 random bytes."
