@@ -22,16 +22,23 @@ presa is at 0.x: the API may change between minor versions until 1.0.
 
 ## Using presa
 
-presa is released as git tags (see [RELEASING.md](RELEASING.md)):
+presa is on [Clojars](https://clojars.org/io.github.joshrotenberg/presa),
+and each release is also a git tag (see [RELEASING.md](RELEASING.md)):
 
 <!-- x-release-please-start-version -->
 ```clojure
+;; deps.edn or bb.edn, from Clojars
+{:deps {io.github.joshrotenberg/presa {:mvn/version "0.0.0"}}}
+
+;; or from the tag
 {:deps {io.github.joshrotenberg/presa {:git/tag "v0.0.0" :git/sha "..."}}}
 ```
 <!-- x-release-please-end -->
 
 `git ls-remote https://github.com/joshrotenberg/presa.git refs/tags/<tag>`
-gives the sha.
+gives the sha. Full JSON Schema validation on the JVM
+(`presa.schema.networknt`) also needs `com.networknt/json-schema-validator`,
+which presa does not pull in.
 
 ## Goals
 

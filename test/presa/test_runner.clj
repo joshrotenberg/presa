@@ -19,6 +19,7 @@
             [presa.protocol-test]
             [presa.proxy-test]
             [presa.schema-test]
+            [presa.scopes-test]
             [presa.server-surface-test]
             [presa.server-test]
             [presa.subscriptions-test]
@@ -45,6 +46,7 @@
     presa.auth-client-test
     presa.auth-dpop-test
     presa.auth-grants-test
+    presa.scopes-test
     presa.tasks-test
     presa.proxy-test
     presa.example.hello-test
