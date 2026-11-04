@@ -681,7 +681,7 @@ requirement files (`requirements/2026-07-28.yaml:111-129`,
 | `auth/client-credentials-basic` | `io.modelcontextprotocol/oauth-client-credentials` (SEP-1046) | `grant_type=client_credentials` with Basic `conformance-test-client:conformance-test-secret`; check `client-credentials-basic-auth` | passes |
 | `auth/client-credentials-jwt` | same | `client_credentials` with a `private_key_jwt` assertion (ES256, `iss` = `sub` = client ID, `aud` = AS URL) signed by the context key; checks `client-credentials-jwt-verified` (plus `-iss`, `-sub`, `-assertion-type`, `-grant-type` on failure) | passes |
 | `auth/enterprise-managed-authorization` | SEP-990 | RFC 8693 token exchange of `idp_id_token` at `idp_token_endpoint` for an ID-JAG (`requested_token_type=urn:ietf:params:oauth:token-type:id-jag`, `audience`, `resource`), then a JWT-bearer grant at the AS with the ID-JAG as `assertion` and Basic client auth; checks `complete-flow-token-exchange`, `complete-flow-jwt-bearer` | fails both |
-| `auth/dpop`, `auth/dpop-nonce` | `io.modelcontextprotocol/auth/dpop` (SEP-1932, RFC 9449) | DPoP proof at the token endpoint, `Authorization: DPoP` with a fresh proof per request; the nonce variant adds `use_dpop_nonce` retries at AS and RS; checks `sep-1932-client-token-request-proof`, `-dpop-auth-scheme`, `-fresh-proof`, `-as-nonce`, `-rs-nonce` | fails all |
+| `auth/dpop`, `auth/dpop-nonce` | `io.modelcontextprotocol/auth/dpop` (SEP-1932, RFC 9449) | DPoP proof at the token endpoint, `Authorization: DPoP` with a fresh proof per request; the nonce variant adds `use_dpop_nonce` retries at AS and RS; checks `sep-1932-client-token-request-proof`, `-dpop-auth-scheme`, `-fresh-proof`, `-as-nonce`, `-rs-nonce` | (presa: passes all) |
 | `auth/wif-jwt-bearer` | `io.modelcontextprotocol/auth/wif` (SEP-1933) | `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` with `assertion=valid_jwt`, no DCR, `none` auth; no retry or grant fallback after an error; checks `wif-grant-type`, `wif-assertion-verified`, `wif-grant-fallback` (WARNING), `wif-no-retry` (WARNING) | fails `wif-grant-type` |
 
 For the client credentials grant snodo runs PRM and AS discovery and client
@@ -867,9 +867,9 @@ is `http://localhost:<port>`.
   default (`oc:client.ex:84`).
 - **DPoP challenge scheme.** The DPoP scenarios answer `DPoP
   resource_metadata=...` with no Bearer challenge. snodo's flow refuses a
-  non-bearer scheme (`oc:flow.ex:92-95`); a presa provider that ignores the
-  scheme would run the flow and present a Bearer token, which those
-  scenarios fail anyway.
+  non-bearer scheme (`oc:flow.ex:92-95`). presa's provider runs the flow
+  for any scheme, and uses DPoP when the authorization server lists ES256
+  in `dpop_signing_alg_values_supported` (`presa.auth.dpop`).
 - **Extension scenarios at a revision.** Extension scenarios are not on the
   spec timeline (runner `xc` returns false for `extensionId`), and the runner
   prints SKIPPED for an inapplicable scenario unless forced (runner `jc`).

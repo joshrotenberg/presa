@@ -3,6 +3,7 @@
   fails, under Babashka (bb test) and on the JVM (clojure -M:test)."
   (:require [clojure.test :as test]
             [presa.auth-client-test]
+            [presa.auth-dpop-test]
             [presa.auth-test]
             [presa.catalog-test]
             [presa.client-cache-test]
@@ -41,6 +42,7 @@
     presa.limits-test
     presa.auth-test
     presa.auth-client-test
+    presa.auth-dpop-test
     presa.tasks-test
     presa.proxy-test
     presa.example.hello-test

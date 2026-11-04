@@ -76,7 +76,4 @@ Open work is filed as issues, labelled by priority and area:
 
 | Issue | Priority |
 |---|---|
-| joshrotenberg/presa#42 DPoP for the OAuth client | p3 |
 | joshrotenberg/presa#43 workload identity and enterprise-managed authorization grants | p3 |
-| joshrotenberg/presa#49 a complete example: server, client walkthrough, hosts | p2 |
-| joshrotenberg/presa#50 client 2025-11-25 conformance lane flakes in CI | p2 |

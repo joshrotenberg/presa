@@ -127,10 +127,11 @@
     false))
 
 (defn sign
-  "A compact JWS of claims, for tests and for servers that mint tokens.
-  key is a private key (RS256, ES256) or secret bytes (HS256)."
-  [claims {:keys [alg kid key]}]
-  (let [header (cond-> {"alg" alg "typ" "at+jwt"} kid (assoc "kid" kid))
+  "A compact JWS of claims, for tests, servers that mint tokens, and DPoP
+  proofs. key is a private key (RS256, ES256) or secret bytes (HS256).
+  :typ replaces the default \"at+jwt\", and :header adds header entries."
+  [claims {:keys [alg kid key typ header]}]
+  (let [header (cond-> (merge {"alg" alg "typ" (or typ "at+jwt")} header) kid (assoc "kid" kid))
         enc #(b64 (.getBytes (json/write-str %) "UTF-8"))
         input (str (enc header) "." (enc claims))
         sig (case alg

@@ -136,5 +136,14 @@ a browser:
 
 `:grant :client-credentials` with `:client-id` and `:client-secret` (or
 `:private-key-pem` for `private_key_jwt`) gets a token without a user.
+
+When the authorization server lists ES256 in
+`dpop_signing_alg_values_supported`, the provider binds its tokens to a
+key with DPoP (RFC 9449): an ES256 key pair per provider, a proof in the
+`DPoP` header of each token request, and on each request to the server
+`Authorization: DPoP` with a fresh proof that carries the token's hash.
+A `use_dpop_nonce` answer, from the authorization server or the MCP
+server, is retried once with the nonce it gave. `:dpop false` turns this
+off. `presa.auth.dpop` makes the proofs.
 [docs/oauth-client.md](../oauth-client.md) is the reference; the
 conformance runner's 25 scored authorization scenarios pass.
