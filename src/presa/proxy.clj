@@ -19,6 +19,11 @@
   Logs: a backend's log messages about a call reach the caller through
   presa.server/log!, filtered by the caller's level.
 
+  Cancellation: when the caller cancels a call, the proxy cancels it at the
+  backend (notifications/cancelled), and fails any request the backend is
+  waiting on; a parked call is freed when its initialize-era caller gives
+  up on presa's request.
+
   Over stdio, a backend's log messages and requests cannot be matched to a
   call, so neither is forwarded: they go to the backend client's own :on-log
   and :handlers. Backends on in-process and HTTP transports are matched.
@@ -54,6 +59,8 @@
     (.nextBytes (SecureRandom.) b)
     (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b)))
 
+(declare watch-parked!)
+
 (defn- park!
   "Keep a call waiting on the caller's answer to ask, an initialize-era
   backend's request; returns the proxy's input_required. When the caller
@@ -64,7 +71,8 @@
   (let [id (new-id)
         asked {"backend" {"method" method "params" params}}]
     (if (contains? (:client-capabilities ctx) (input-capabilities method))
-      (swap! parked assoc id (assoc call :reply reply :asked asked))
+      (do (swap! parked assoc id (assoc call :reply reply :asked asked))
+          (watch-parked! parked id call ctx))
       (deliver reply ::refused))
     (server/input-required asked {"parked" id})))
 
@@ -79,16 +87,55 @@
                              (contains? result "requestState") (assoc "backendState" (get result "requestState"))))
     result))
 
+(defn- cancel-call!
+  "Stop call: fail the request the backend is waiting on, if any, and
+  interrupt the call, which sends the backend notifications/cancelled."
+  [{:keys [work pending]}]
+  (some-> pending deref (deliver ::cancelled))
+  (some-> work future-cancel)
+  nil)
+
+(defn- cancelled? [ctx] (boolean (some-> (:cancelled? ctx) (apply []))))
+
+(def ^:private slice-ms 100)
+
 (defn- next-event
-  "Wait for what the call does next: [:ask ask], [:done result] or [:error e]."
-  [{:keys [^LinkedBlockingQueue events timeout-ms]}]
-  (or (.poll events (long (+ timeout-ms 1000)) TimeUnit/MILLISECONDS)
-      [:error (ex-info (str "The backend did not answer within " timeout-ms " ms") {:kind :timeout})]))
+  "Wait for what the call does next: [:ask ask], [:done result] or [:error e].
+  When the caller's request is cancelled meanwhile (its cancelled? flag, or
+  an interrupt of this thread), the call is cancelled too."
+  [{:keys [^LinkedBlockingQueue events timeout-ms] :as call} ctx]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms 1000)]
+    (loop []
+      (let [e (try (.poll events (long slice-ms) TimeUnit/MILLISECONDS)
+                   (catch InterruptedException ie
+                     (cancel-call! call)
+                     (throw ie)))]
+        (cond
+          e e
+          (cancelled? ctx) (do (cancel-call! call)
+                               [:error (ex-info "The caller cancelled the request" {:kind :cancelled})])
+          (> (System/currentTimeMillis) deadline)
+          (do (cancel-call! call)
+              [:error (ex-info (str "The backend did not answer within " timeout-ms " ms") {:kind :timeout})])
+          :else (recur))))))
+
+(defn- watch-parked!
+  "While the call parked under id waits, cancel it if the request that
+  parked it is cancelled: an initialize-era caller that gives up on the
+  request presa sent it."
+  [parked id call ctx]
+  (future
+    (loop []
+      (when (contains? @parked id)
+        (if (cancelled? ctx)
+          (when (get (first (swap-vals! parked dissoc id)) id)
+            (cancel-call! call))
+          (do (Thread/sleep (long slice-ms)) (recur)))))))
 
 (defn- follow
   "Follow call until it ends or asks for input."
   [parked call ctx]
-  (let [[kind v] (next-event call)]
+  (let [[kind v] (next-event call ctx)]
     (case kind
       :ask (park! parked call ctx v)
       :done (settle v)
@@ -101,10 +148,13 @@
   [c method params ctx parked]
   (let [events (LinkedBlockingQueue.)
         timeout-ms (or (get-in c [:opts :timeout-ms]) client/default-timeout-ms)
+        ;; the reply the backend's current request waits on
+        pending (atom nil)
         ask (fn [method]
               (fn [params]
                 (let [reply (promise)
                       ask {:method method :params params :reply reply}]
+                  (reset! pending reply)
                   (.put events [:ask ask])
                   (let [answer (deref reply timeout-ms ::timeout)]
                     (case answer
@@ -116,13 +166,15 @@
                       ::refused
                       (throw (ex-info (str "The caller cannot answer " method)
                                       {:presa/error {:code -32601 :message (str "The caller cannot answer " method)}}))
+                      ::cancelled
+                      (throw (ex-info "The caller cancelled the request"
+                                      {:presa/error {:code -32603 :message "The caller cancelled the request"}}))
                       answer)))))
         handlers (into {} (map (fn [m] [m (ask m)])) (keys input-capabilities))
-        call {:events events :timeout-ms timeout-ms}]
-    (future
-      (try (.put events [:done (client/request c method params (assoc (call-opts ctx) :handlers handlers))])
-           (catch Throwable e (.put events [:error e]))))
-    call))
+        work (future
+               (try (.put events [:done (client/request c method params (assoc (call-opts ctx) :handlers handlers))])
+                    (catch Throwable e (.put events [:error e]))))]
+    {:events events :timeout-ms timeout-ms :work work :pending pending}))
 
 (defn- forward
   "Send method with params to c on behalf of the request of ctx, or carry
