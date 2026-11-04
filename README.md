@@ -9,7 +9,20 @@ the protocol version and client capabilities in each request's `_meta`,
 (`2025-11-25` and `2025-06-18`) are an opt-in, which Codex needs today: see
 [docs/hosts.md](docs/hosts.md) for what Claude Code and Codex send.
 
-presa is pre-release: there is no published version, and the API will change.
+presa is at 0.x: the API may change between minor versions until 1.0.
+
+## Using presa
+
+presa is released as git tags (see [RELEASING.md](RELEASING.md)):
+
+<!-- x-release-please-start-version -->
+```clojure
+{:deps {io.github.joshrotenberg/presa {:git/tag "v0.0.0" :git/sha "..."}}}
+```
+<!-- x-release-please-end -->
+
+`git ls-remote https://github.com/joshrotenberg/presa.git refs/tags/<tag>`
+gives the sha.
 
 ## Goals
 
