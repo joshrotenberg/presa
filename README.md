@@ -28,10 +28,10 @@ and each release is also a git tag (see [RELEASING.md](RELEASING.md)):
 <!-- x-release-please-start-version -->
 ```clojure
 ;; deps.edn or bb.edn, from Clojars
-{:deps {io.github.joshrotenberg/presa {:mvn/version "0.1.0"}}}
+{:deps {io.github.joshrotenberg/presa {:mvn/version "0.1.1"}}}
 
 ;; or from the tag; :git/sha is the tag's commit (see below)
-{:deps {io.github.joshrotenberg/presa {:git/tag "v0.1.0" :git/sha "..."}}}
+{:deps {io.github.joshrotenberg/presa {:git/tag "v0.1.1" :git/sha "..."}}}
 ```
 <!-- x-release-please-end -->
 

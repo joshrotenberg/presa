@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/joshrotenberg/presa/compare/v0.1.0...v0.1.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* let the lint allow GitHub's co-author trailer for bot pull requests ([#62](https://github.com/joshrotenberg/presa/issues/62)) ([13d0612](https://github.com/joshrotenberg/presa/commit/13d06124d18ac9298900eeeef2a30d24f3e6adbe))
+
 ## 0.1.0 (2026-11-04)
 
 
