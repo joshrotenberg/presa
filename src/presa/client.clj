@@ -300,6 +300,10 @@
              (some #{protocol/latest-version} (get result "supportedVersions")))
         result
 
+        ;; an authorization refusal is that, not an older server
+        (and (= -32000 (get error "code")) (#{401 403} (get-in error ["data" "status"])))
+        (throw (protocol-error error))
+
         ;; -32022 naming a revision this client speaks: ask again with it
         (and (= -32022 (get error "code"))
              (some #{protocol/latest-version} (get-in error ["data" "supported"]))

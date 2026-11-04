@@ -57,6 +57,7 @@ gives the sha.
 | `presa.proxy` | one server in front of several MCP servers |
 | `presa.tasks` | the Tasks extension's task store and wire shapes |
 | `presa.auth`, `presa.auth.jwt` | OAuth 2.1 resource server: metadata, bearer challenges, JWT verification (RS256, ES256, HS256, JWKS) |
+| `presa.auth.client` | OAuth 2.1 client: discovery, registration, PKCE code flow, client credentials, step-up |
 
 [docs/roadmap.md](docs/roadmap.md) lists what is done and what is next.
 
@@ -90,7 +91,7 @@ gives the sha.
 | [Asking the client for input](docs/guides/input.md) | elicitation, sampling, roots, signed request state, both eras |
 | [Subscriptions](docs/guides/subscriptions.md) | `subscriptions/listen`, list changes, resource updates |
 | [Tasks](docs/guides/tasks.md) | the Tasks extension: long-running tools, server and client |
-| [Authorization](docs/guides/authorization.md) | the OAuth 2.1 resource server, JWT verification, scopes |
+| [Authorization](docs/guides/authorization.md) | the OAuth 2.1 resource server and client, JWT verification, scopes |
 | [Initialize-era clients](docs/guides/initialize-era.md) | serving 2025-11-25 and 2025-06-18, and what differs |
 | [Logging, progress and instrumentation](docs/guides/observability.md) | `log!`, `progress!`, `:on-event` |
 
@@ -105,9 +106,9 @@ revision on the wire), [docs/tasks-extension.md](docs/tasks-extension.md),
 
 [conformance/](conformance/README.md) runs the official MCP conformance
 runner against a fixture server and a client harness. All 37 required
-2026-07-28 server scenarios pass, as do the ten Tasks extension scenarios,
-the 2025-11-25 and 2025-06-18 server suites, and every non-auth client
-scenario.
+2026-07-28 server scenarios pass, as do the ten Tasks extension scenarios, the
+2025-11-25 and 2025-06-18 server suites, and every scored client scenario,
+the 25 authorization ones included.
 
 ## The example server
 

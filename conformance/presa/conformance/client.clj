@@ -19,6 +19,8 @@
 
   Modeled on snodo's conformance/client.exs."
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
+            [presa.auth.client :as auth-client]
             [presa.client :as client]
             [presa.transport.http :as http]))
 
@@ -66,9 +68,32 @@
   (when-let [s (System/getenv "MCP_CONFORMANCE_CONTEXT")]
     (json/read-str s)))
 
+(def client-metadata-url
+  "The client ID metadata document the runner's basic-cimd scenario expects."
+  "https://conformance-test.local/client-metadata.json")
+
+(defn- token-provider
+  "For auth/* scenarios: an OAuth provider with the context's credentials,
+  reading the authorization redirect instead of opening a browser."
+  [url]
+  (let [scenario (str (System/getenv "MCP_CONFORMANCE_SCENARIO"))
+        ctx (context)]
+    (when (str/starts-with? scenario "auth/")
+      (auth-client/provider
+       (cond-> {:resource url
+                :authorizer (auth-client/redirect-reader)
+                :client-metadata-url client-metadata-url
+                :client-name "presa-conformance"}
+         (get ctx "client_id") (assoc :client-id (get ctx "client_id"))
+         (get ctx "client_secret") (assoc :client-secret (get ctx "client_secret"))
+         (get ctx "private_key_pem") (assoc :private-key-pem (get ctx "private_key_pem"))
+         (str/starts-with? scenario "auth/client-credentials") (assoc :grant :client-credentials))))))
+
 (defn run [url]
   (let [protocol (or (System/getenv "PRESA_CLIENT_PROTOCOL") "2026-07-28")
-        c (client/connect (http/url url {:log (fn [& parts] (log "transport" (apply str parts)))})
+        provider (token-provider url)
+        c (client/connect (http/url url (cond-> {:log (fn [& parts] (log "transport" (apply str parts)))}
+                                          provider (assoc :token-provider provider)))
                           {:versions [protocol]
                            :client-info {"name" "presa-conformance" "version" "0.1.0"}
                            :handlers handlers

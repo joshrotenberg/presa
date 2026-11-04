@@ -103,5 +103,38 @@ to the subject, so one caller cannot resume another's.
 `http/handler`'s `:cancellation :subject` lets a posted
 `notifications/cancelled` stop a request of the same subject.
 
-A presa client sends whatever `:headers` it is given; it does not run the
-OAuth flows yet.
+## The client side
+
+`presa.auth.client/provider` is a token provider for `http/url`. On a 401
+(or a 403 `insufficient_scope`) it finds the server's protected resource
+metadata and its authorization server's metadata, identifies the client (a
+client ID metadata document, pre-registered credentials, or dynamic
+registration), runs the authorization code flow with PKCE and the
+resource indicator, checks the response's `iss`, exchanges the code, and
+the request is sent again with the token. A later 403 that asks for more
+scope runs it again for the union of scopes; a token from another
+authorization server is never reused.
+
+The browser step is yours: an authorizer gets the authorization URL and
+returns the URL the authorization server redirected to.
+`loopback-authorizer` listens on 127.0.0.1 and calls your function to open
+a browser:
+
+<!-- no-run -->
+```clojure
+(require '[presa.auth.client :as oauth])
+
+(def authorizer (oauth/loopback-authorizer
+                 (fn [url] (.exec (Runtime/getRuntime) (into-array ["open" url])))))
+
+(def provider (oauth/provider {:resource "https://mcp.example.com/mcp"
+                               :authorizer authorizer
+                               :client-name "my-agent"}))
+
+(client/connect (http/url "https://mcp.example.com/mcp" {:token-provider provider}))
+```
+
+`:grant :client-credentials` with `:client-id` and `:client-secret` (or
+`:private-key-pem` for `private_key_jwt`) gets a token without a user.
+[docs/oauth-client.md](../oauth-client.md) is the reference; the
+conformance runner's 25 scored authorization scenarios pass.
