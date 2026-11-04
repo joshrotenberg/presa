@@ -142,7 +142,7 @@
   "nil when a tools/call request's Mcp-Param-* headers match the arguments
   its tool's input schema mirrors with x-mcp-header, else the rejection."
   [srv req {:strs [id params]}]
-  (let [tool (get-in srv [:tools (get params "name")])
+  (let [tool (server/tool srv (get params "name"))
         found (when tool (param-headers (:input-schema tool)))]
     (when (sequential? found)
       (some (fn [[h prop _]]
