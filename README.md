@@ -64,6 +64,7 @@ not pull in; pass `presa.schema.networknt/validator` as the server's
 | `presa.protocol` | spec revisions, `_meta` keys, error codes, log levels |
 | `presa.jsonrpc` | JSON-RPC 2.0 messages and newline framing |
 | `presa.server` | a server as data; dispatch for discovery, initialize, tools, resources, prompts, completion; input requests, subscriptions, the Tasks extension, scopes, changing a running server, pagination, caching hints, logging, progress and `:on-event` instrumentation |
+| `presa.server.*` | internal to `presa.server`: `core` (errors, results, notifications), `catalog` (definitions), `access` (scopes), `shape` (results by revision, pagination, wire forms), `methods`, `tasks`, `subscriptions`, `dispatch` (revision resolution, routing) |
 | `presa.content` | content blocks: text, image, audio, embedded resources, resource links |
 | `presa.uri-template` | `{var}` and `{+var}` URI templates for resource templates |
 | `presa.connection` | one client's connection to a server: session, concurrency, cancellation |
