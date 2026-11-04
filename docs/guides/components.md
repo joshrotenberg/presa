@@ -55,6 +55,41 @@ can correct its call. `:validate? false` on the server turns this off, and
 gives full 2020-12 validation on the JVM with
 `com.networknt/json-schema-validator` added.
 
+### Keywords instead of strings
+
+Schemas may use keyword keys and values. presa turns them into JSON Schema
+with string keys when the tool is defined, so `tools/list` and the
+validator see `{"type" "object" ...}`; a namespaced keyword `:a/b` becomes
+`"a/b"`. Arguments still arrive with string keys unless the server, or one
+tool, sets `:keywordize-args?`: then the handler gets keyword keys,
+recursively, as `clojure.walk/keywordize-keys` gives them, with names as
+the client sent them (`first_name` stays `:first_name`). Arguments are
+validated before they are converted, and a task's handler gets the same
+keys.
+
+```clojure
+(def greeter
+  (server/server
+   {:name "greeter" :version "0.1.0"
+    :keywordize-args? true
+    :tools [{:name "greet"
+             :input-schema {:type :object
+                            :properties {:name {:type :string}
+                                         :style {:enum [:plain :loud]}}
+                            :required [:name]}
+             :handler (fn [{:keys [name style]} _]
+                        (cond-> (str "Hello, " name "!")
+                          (= "loud" style) clojure.string/upper-case))}]}))
+
+(get (:input-schema (server/tool greeter "greet")) "required")
+;; => ["name"]
+
+(let [g (client/connect (client/in-process greeter))]
+  (try (client/text (client/call-tool g "greet" {"name" "Ada" "style" "loud"}))
+       (finally (client/close g))))
+;; => "HELLO, ADA!"
+```
+
 ## Resources and templates
 
 A resource has a URI and a handler of the context. It returns a string

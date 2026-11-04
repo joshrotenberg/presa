@@ -6,6 +6,7 @@
             [presa.auth-dpop-test]
             [presa.auth-grants-test]
             [presa.auth-test]
+            [presa.authoring-test]
             [presa.catalog-test]
             [presa.client-cache-test]
             [presa.client-test]
@@ -34,6 +35,7 @@
     presa.content-test
     presa.server-test
     presa.server-surface-test
+    presa.authoring-test
     presa.schema-test
     presa.transport.stdio-test
     presa.transport.http-test

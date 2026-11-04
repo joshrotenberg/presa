@@ -57,6 +57,10 @@
                 isError result, unless it throws `error`.
       :description, :title, :input-schema (default {\"type\" \"object\"}),
       :output-schema, :annotations, :meta
+      :keywordize-args?  overrides the server's :keywordize-args? for this
+                tool
+      Schemas may use keyword keys and values ({:type :object}); presa
+      sends and validates them as JSON Schema with string keys.
   - :resources  resource maps:
       :uri, :name (required)
       :handler  (fn [context]) (required). Returns a string (text), a byte
@@ -90,6 +94,10 @@
       results against :output-schema (default true).
       Invalid arguments are an isError result the model can read; invalid
       output is an internal error.
+  - :keywordize-args?  pass tool handlers their arguments with keyword
+      keys, recursively, as clojure.walk/keywordize-keys does (default
+      false: string keys). Arguments are validated before they are
+      converted. A tool's own :keywordize-args? overrides this.
   - :validator  (fn [value schema]) -> nil, or a failure {:path [..]
       :keyword k :message m}; default presa.schema/validate, a subset of
       JSON Schema. presa.schema.networknt/validator gives full 2020-12
@@ -141,7 +149,7 @@
   a map {\"values\" [...] \"total\" n \"hasMore\" b}. At most 100 values are
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
-           versions page-size cache logging log-level validate? state-secret state-ttl-ms
+           versions page-size cache logging log-level validate? state-secret state-ttl-ms keywordize-args?
            list-changed subscribe max-subscriptions on-event required-scopes default-scopes validator]
     tasks-opts :tasks
     :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000
@@ -189,6 +197,7 @@
      ;; open subscriptions/listen streams, by a key of their own
      :listeners (atom {})
      :validate? (boolean validate?)
+     :keywordize-args? (boolean keywordize-args?)
      :validator (or validator schema/validate)
      :state-secret (if state-secret
                      (request-state/secret-bytes state-secret)
