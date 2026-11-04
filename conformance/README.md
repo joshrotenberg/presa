@@ -49,11 +49,11 @@ runner's `dist/index.js`).
 |---|---|---|
 | Required (37) | 37 with no FAILURE, WARNING or SKIPPED check | `server-stateless`: 30 of 30, including the `subscriptions/listen` checks |
 | Pending, unscored (3) | `http-header-validation`, `http-custom-header-server-validation`, `json-schema-2020-12` pass | |
-| Tasks extension, unscored (10) | 9 fail, 1 skipped | presa does not implement `io.modelcontextprotocol/tasks` |
+| Tasks extension, unscored (10) | 9 pass, 1 skipped | the skipped one, `tasks-status-notifications`, is a runner stub that always skips |
 
-Totals over all 50 scenarios run: 164 SUCCESS, 30 FAILURE (all Tasks), 1
-SKIPPED (Tasks), 1 INFO (`server-sse-multiple-streams`: every response was
-JSON).
+Totals over all 50 scenarios run: 196 SUCCESS, 0 FAILURE, 1 SKIPPED (the
+Tasks notification stub), 1 INFO (`server-sse-multiple-streams`: every
+response was JSON).
 
 ### Initialize-era lanes
 

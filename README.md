@@ -53,6 +53,7 @@ gives the sha.
 | `presa.request-state` | signed `requestState` tokens for multi round-trip requests |
 | `presa.schema` | JSON Schema subset validation for tool arguments and output |
 | `presa.transport.http` | Streamable HTTP: a server over http-kit, a client over `java.net.http` |
+| `presa.tasks` | the Tasks extension's task store and wire shapes |
 | `presa.auth`, `presa.auth.jwt` | OAuth 2.1 resource server: metadata, bearer challenges, JWT verification (RS256, ES256, HS256, JWKS) |
 
 [docs/roadmap.md](docs/roadmap.md) lists what is done and what is next.
@@ -172,6 +173,32 @@ Handlers see the caller as `(:auth context)` (`:subject`, `:client-id`,
 `:required-scopes` per tool, prompt, resource or template: a caller without
 them does not see the component, and a call to it is -32003.
 
+## Long-running tools as tasks
+
+With `:tasks` on the server (the `io.modelcontextprotocol/tasks`
+extension), a tool marked `:task :optional` or `:required` runs as a task
+for clients that declare the extension: `tools/call` answers at once with a
+task id, and the client polls `tasks/get`, answers input with
+`tasks/update`, or cancels with `tasks/cancel`.
+
+```clojure
+(server/server {:name "jobs" :version "0.1.0"
+                :tasks {:ttl-ms 3600000}
+                :tools [{:name "build" :task :optional
+                         :handler (fn [args ctx] (run-build! args ctx))}]})
+
+(def c (client/connect transport {:tasks true :handlers handlers}))
+(let [created (client/call-tool c "build" {"target" "all"})]
+  (if (client/task? created)
+    (client/await-task c created)   ; polls, answers input with :handlers
+    created))
+```
+
+A handler inside a task can return `server/input-required` as usual; the
+task waits at `input_required` until the client answers. Clients that do
+not declare Tasks get optional tools synchronously and required ones as
+-32021. See [docs/tasks-extension.md](docs/tasks-extension.md).
+
 ## Asking the client for input
 
 A tool, resource or prompt handler can ask the client for input before it
@@ -203,8 +230,9 @@ calls the handler again. A presa client answers with its `:handlers`:
 
 [conformance/](conformance/README.md) runs the official MCP conformance
 runner against a fixture server and a client harness. All 37 required
-2026-07-28 server scenarios pass, as do the 2025-11-25 and 2025-06-18
-server suites and every non-auth client scenario.
+2026-07-28 server scenarios pass, as do the ten Tasks extension scenarios,
+the 2025-11-25 and 2025-06-18 server suites, and every non-auth client
+scenario.
 
 ## The example server
 

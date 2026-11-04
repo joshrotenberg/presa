@@ -57,7 +57,8 @@
         s))))
 
 (def ^:private name-param
-  {"tools/call" "name" "prompts/get" "name" "resources/read" "uri"})
+  {"tools/call" "name" "prompts/get" "name" "resources/read" "uri"
+   "tasks/get" "taskId" "tasks/update" "taskId" "tasks/cancel" "taskId"})
 
 ;; Server
 

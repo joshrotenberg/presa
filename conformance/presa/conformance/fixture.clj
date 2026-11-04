@@ -201,6 +201,53 @@
                                                       "items" {"anyOf" [{"const" "value1" "title" "First Choice"}
                                                                         {"const" "value2" "title" "Second Choice"}
                                                                         {"const" "value3" "title" "Third Choice"}]}}}})}))))
+   ;; Tasks extension scenarios (docs/tasks-extension.md section 9)
+   (tool "greet" "Greets; never a task"
+         (fn [{:strs [name]} _] (str "Hello, " (or name "World") "!")))
+   (tool "slow_compute" "Sleeps for seconds, then completes; a task when the client declares Tasks"
+         (fn [{:strs [seconds label]} _]
+           (when (and (number? seconds) (pos? seconds))
+             (Thread/sleep (long (Math/round (* 1000.0 (double seconds))))))
+           (str "Completed " label))
+         {:task :optional})
+   (tool "failing_job" "A task that reports a tool error"
+         (fn [_ _] (server/tool-error "The task job failed"))
+         {:task :required})
+   (tool "protocol_error_job" "A task that raises"
+         (fn [_ _] (throw (ex-info "protocol_error_job raised" {})))
+         {:task :required})
+   (tool "confirm_delete" "Asks for confirmation inside its task"
+         (fn [{:strs [filename]} ctx]
+           (if-let [r (server/input-response ctx "confirm-delete")]
+             (str "Delete confirmed: " (true? (get-in r ["content" "confirm"])))
+             (server/input-required
+              {"confirm-delete" (input/elicit (str "Delete " filename "?")
+                                              {"type" "object"
+                                               "properties" {"confirm" {"type" "boolean"}}
+                                               "required" ["confirm"]})})))
+         {:task :optional})
+   (tool "multi_input" "Asks for two inputs at once inside its task"
+         (fn [_ ctx]
+           (let [a (server/input-response ctx "first-input")
+                 b (server/input-response ctx "second-input")
+                 label #(or (get-in % ["content" "name"]) "confirmed")]
+             (if (and a b)
+               (str "Inputs received: " (label a) ", " (label b))
+               (server/input-required
+                (cond-> {}
+                  (not a) (assoc "first-input" (input/elicit "First input" {"type" "object" "properties" {"name" {"type" "string"} "confirm" {"type" "boolean"}}}))
+                  (not b) (assoc "second-input" (input/elicit "Second input" {"type" "object" "properties" {"name" {"type" "string"} "confirm" {"type" "boolean"}}})))))))
+         {:task :optional})
+   (tool "test_tool_with_task" "Asks for a name synchronously, then runs as a task"
+         (fn [_ ctx]
+           (if-let [n (accepted ctx "user_name" "name")]
+             (str "Hello, " n "; task completed")
+             (server/input-required
+              {"user_name" (input/elicit "What is your name?"
+                                         {"type" "object" "properties" {"name" {"type" "string"}} "required" ["name"]})}
+              {"round" 1})))
+         ;; synchronous MRTR first; the round with the answer becomes a task
+         {:task (fn [params _] (if (seq (get params "inputResponses")) :required :sync))})
    (tool "custom_header_region" "Returns its region, which also travels in the Mcp-Param-Region header"
          (fn [{:strs [region]} _] (str "Region: " region))
          {:input-schema {"type" "object"
@@ -273,6 +320,7 @@
                   :logging true
                   :list-changed true
                   :subscribe (= "legacy" profile)
+                  :tasks (when-not (= "legacy" profile) {:ttl-ms 3600000 :poll-interval-ms 100})
                   :tools tools
                   :resources resources
                   :resource-templates resource-templates

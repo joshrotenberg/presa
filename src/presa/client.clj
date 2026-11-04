@@ -338,6 +338,9 @@
                    `set-log-level`
   - :on-log        (fn [params]) for notifications/message
   - :on-notification  (fn [message]) for every notification
+  - :tasks         true to declare the Tasks extension, so a server may answer
+                   tools/call with a task (resultType \"task\"); see
+                   `await-task`
   - :cache         true to cache 2026-07-28 results by their ttlMs; see
                    `request`
   - :handlers      {method (fn [params])} answering what a server asks
@@ -352,6 +355,8 @@
                       :capabilities (handler-capabilities (:handlers opts))
                       :versions protocol/versions}
                      opts)
+         opts (cond-> opts
+                (:tasks opts) (assoc-in [:capabilities "extensions" "io.modelcontextprotocol/tasks"] {}))
          client {:opts opts
                  :conn (atom nil)
                  :pending (atom {})
@@ -543,3 +548,59 @@
                      (catch Exception _))
                 (swap! (:pending client) dissoc id)
                 (deliver p {"result" nil})))}))
+
+;; Tasks
+
+(defn task?
+  "Whether a tools/call result is a task the server created."
+  [result]
+  (= "task" (get result "resultType")))
+
+(defn task
+  "The task's current state (tasks/get): taskId, status, and result, error
+  or inputRequests by status."
+  [client task-id & [opts]]
+  (request client "tasks/get" {"taskId" task-id} opts))
+
+(defn update-task
+  "Answer a task's input requests (tasks/update); responses maps the keys
+  of its inputRequests to results."
+  [client task-id responses & [opts]]
+  (request client "tasks/update" {"taskId" task-id "inputResponses" responses} opts))
+
+(defn cancel-task
+  "Ask the server to cancel a task (tasks/cancel)."
+  [client task-id & [opts]]
+  (request client "tasks/cancel" {"taskId" task-id} opts))
+
+(def ^:private terminal-statuses #{"completed" "failed" "cancelled"})
+
+(defn await-task
+  "Poll a task until it is completed, failed or cancelled, answering its
+  input requests with the client's :handlers, and return the final
+  tasks/get result. task is a taskId or a CreateTaskResult. Polls at the
+  task's pollIntervalMs (default 250). opts: :timeout-ms for the whole wait
+  (default 600000)."
+  ([client task] (await-task client task {}))
+  ([client task {:keys [timeout-ms] :or {timeout-ms 600000}}]
+   (let [id (if (map? task) (get task "taskId") task)
+         deadline (+ (System/currentTimeMillis) timeout-ms)]
+     (loop [answered #{}]
+       (let [t (request client "tasks/get" {"taskId" id})
+             status (get t "status")]
+         (cond
+           (terminal-statuses status) t
+
+           (> (System/currentTimeMillis) deadline)
+           (throw (ex-info (str "Task " id " did not finish in " timeout-ms " ms") {:kind :timeout :task-id id}))
+
+           (= "input_required" status)
+           (let [pending (remove (comp answered key) (get t "inputRequests"))]
+             (when (seq pending)
+               (update-task client id (answer-inputs client (into {} pending))))
+             (Thread/sleep (long (get t "pollIntervalMs" 250)))
+             (recur (into answered (map key pending))))
+
+           :else
+           (do (Thread/sleep (long (get t "pollIntervalMs" 250)))
+               (recur answered))))))))

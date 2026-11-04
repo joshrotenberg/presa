@@ -16,6 +16,7 @@
             [presa.server-surface-test]
             [presa.server-test]
             [presa.subscriptions-test]
+            [presa.tasks-test]
             [presa.transport.http-test]
             [presa.transport.stdio-test]))
 
@@ -35,6 +36,7 @@
     presa.catalog-test
     presa.limits-test
     presa.auth-test
+    presa.tasks-test
     presa.example.hello-test])
 
 (defn -main [& _]
