@@ -13,7 +13,7 @@ current as the project changes.
 | `src/` | Source |
 | `test/` | Tests, run under Babashka and the JVM (`test/presa/test_runner.clj` lists the namespaces) |
 | `test-jvm/` | JVM-only tests: full JSON Schema validation, the wire schema check |
-| `examples/` | The hello and notebook example servers, the notebook's client and REPL walkthroughs |
+| `examples/` | The hello, notebook and Clojars example servers, the notebook's client and REPL walkthroughs |
 | `docs/` | Guides (their Clojure blocks run as tests) and protocol reference |
 | `conformance/` | The official conformance runner's harness, fixture, baselines and vendored schema |
 | `dev/` | `lint.clj` (`bb lint`) and `host_probe.clj` (what real hosts send) |
