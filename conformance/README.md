@@ -8,8 +8,10 @@ frozen 2026-07-28 requirement set: 37 required server scenarios.
   tool, resource and prompt names in section 16 of
   [docs/wire-2026-07-28.md](../docs/wire-2026-07-28.md), served over
   Streamable HTTP on 127.0.0.1.
+- `presa/conformance/client.clj` is the client the runner's client leg runs.
 - `run.clj` starts the fixture under Babashka, runs the runner's server leg
-  against it, and prints each scenario's checks. Raw results land in
+  against it (or the client leg against the harness), and prints each
+  scenario's checks. Raw results land in
   `tmp/conformance/<timestamp>/`.
 
 ```sh
@@ -68,4 +70,18 @@ These include elicitation, sampling and logging during a tool call, which
 presa serves to these clients as requests from server to client, and
 `resources/subscribe` and `unsubscribe`.
 
-Not measured yet: the client leg.
+### Client lanes
+
+`bb conformance client 2026-07-28` and `bb conformance client 2025-11-25`
+run the runner's client leg: for each scenario the runner starts its own
+server and runs `presa.conformance.client` against it, with the server URL
+as the last argument. The harness drives `presa.client` as an application
+would; see its namespace docstring.
+
+| Lane | Result |
+|---|---|
+| client 2026-07-28 (39 scenarios) | the 8 non-auth scenarios pass; `http-standard-headers` has 2 SKIPPED checks, its `initialize` checks, which a 2026-07-28 client never reaches |
+| client 2025-11-25 (25 scenarios) | the 5 non-auth scenarios pass |
+
+The `auth/*` scenarios fail: presa.client has no OAuth flows yet
+(joshrotenberg/presa#8). The baselines record them.

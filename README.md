@@ -148,8 +148,9 @@ calls the handler again. A presa client answers with its `:handlers`:
 ## Conformance
 
 [conformance/](conformance/README.md) runs the official MCP conformance
-runner against a fixture server. All 37 required 2026-07-28 server
-scenarios pass.
+runner against a fixture server and a client harness. All 37 required
+2026-07-28 server scenarios pass, as do the 2025-11-25 and 2025-06-18
+server suites and every non-auth client scenario.
 
 ## The example server
 
