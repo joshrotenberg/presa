@@ -116,3 +116,21 @@
       (reset! sent [])
       (server/list-changed! srv "tools")
       (is (= [] @sent)))))
+
+(deftest initialize-era-http-sessions-hear-changes-on-their-stream
+  (let [srv (make-server ["2026-07-28" "2025-11-25"])
+        {:keys [url stop!]} (http/serve! srv)
+        heard (atom [])
+        c (client/connect (http/url url) {:versions ["2025-11-25"]
+                                          :on-notification #(swap! heard conj (get % "method"))})]
+    (try
+      (is (= "2025-11-25" (:version (client/info c))))
+      ;; the client opens the session stream just after
+      ;; notifications/initialized: announce until it is there to hear
+      (is (wait-for #(do (server/list-changed! srv "tools")
+                         (some #{"notifications/tools/list_changed"} @heard))))
+      (testing "resources/subscribe updates arrive the same way"
+        (client/request c "resources/subscribe" {"uri" "file:///docs"})
+        (server/resource-updated! srv "file:///docs")
+        (is (wait-for #(some #{"notifications/resources/updated"} @heard))))
+      (finally (client/close c) (stop!)))))

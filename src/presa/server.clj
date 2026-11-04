@@ -853,7 +853,7 @@
           [session (fn [] (shape srv context method params (f srv params context)))])
 
         (= "initialize" method)
-        (initialize srv params (:notify extra))
+        (initialize srv params (or (:session-notify extra) (:notify extra)))
 
         (and (= "ping" method) (seq (legacy-versions srv)))
         [session (constantly {})]
@@ -868,7 +868,7 @@
             (swap! (:listeners srv) assoc [(:session-id session) uri]
                    {:kinds #{}
                     :uris [uri]
-                    :send (let [notify (:notify extra)]
+                    :send (let [notify (or (:session-notify extra) (:notify extra))]
                             (fn [method params] (notify (rpc/notification method (not-empty params)))))})
             (swap! (:listeners srv) dissoc [(:session-id session) uri]))
           [session (constantly {})])
@@ -932,19 +932,24 @@
              while the request runs; without it, notifications are dropped
   - :request (fn [method params timeout-ms]) sends the client a request and
              returns its response map; see `client-request!`
+  - :session-notify  (fn [notification]) for what an initialize-era
+             session hears outside any request (list changes, resource
+             updates); defaults to :notify, which on stdio is the same
+             connection
 
   A handler's context holds :version, :client-info, :client-capabilities,
   :meta (the request's _meta), :request-id, :log-level, :notify and
   :cancelled?, and for a resource template, :uri; see `notify!`,
   `progress!` and `log!`."
   ([srv session message] (prepare srv session message {}))
-  ([srv session message {:keys [notify] send-request :request}]
+  ([srv session message {:keys [notify session-notify] send-request :request}]
    (case (rpc/kind message)
      :request
      (let [id (get message "id")
            cancelled (atom false)
            stopped (promise)
            extra {:notify (or notify (fn [_]))
+                  :session-notify session-notify
                   :request send-request
                   :server srv
                   :stopped stopped
