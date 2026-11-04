@@ -60,6 +60,8 @@ jobs:
           restore-keys: clojure-${{ runner.os }}-
       # the stdio client tests start servers under bb, so bb is installed too
       - run: bb jvm-test
+      # the jar a release deploys to Clojars (build.clj)
+      - run: clojure -T:build jar
 
   lint:
     name: Conventions

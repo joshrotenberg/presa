@@ -19,14 +19,44 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       # A PR opened with the workflow token starts no other workflows, so the
       # release PR's CI would not run. RELEASE_PLEASE_TOKEN (a fine-grained
       # token with read and write Contents, Pull requests and Issues on this
       # repository) avoids that; without it the workflow token is used. See
       # RELEASING.md.
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  clojars:
+    # The release's tag, built and deployed as io.github.joshrotenberg/presa.
+    # CLOJARS_TOKEN is a Clojars deploy token; CLOJARS_USERNAME, a repository
+    # variable, is the Clojars user it belongs to. See RELEASING.md.
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
+        with:
+          cli: latest
+      - run: clojure -T:build deploy
+        env:
+          CLOJARS_USERNAME: ${{ vars.CLOJARS_USERNAME || 'joshrotenberg' }}
+          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_TOKEN }}
