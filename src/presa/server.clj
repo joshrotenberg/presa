@@ -210,6 +210,8 @@
       listening clients that a list changed
   - :subscribe  true to advertise resources.subscribe, so clients can listen
       for `resource-updated!` on resources they name
+  - :max-subscriptions  the most subscriptions/listen streams open at once
+      (default 256); another is refused with -32603, which HTTP sends as 503
   - :logging  true to advertise the logging capability, so `log!` sends
       messages to clients that ask for them
   - :log-level  the level an initialize-era session logs at until the client
@@ -222,8 +224,9 @@
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
            versions page-size cache logging log-level validate? state-secret state-ttl-ms
-           list-changed subscribe]
-    :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000}}]
+           list-changed subscribe max-subscriptions]
+    :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000
+         max-subscriptions 256}}]
   (when-not (and (string? name) (string? version))
     (throw (ex-info "A server needs string :name and :version" {:kind :invalid-input})))
   (when-let [unknown (seq (remove protocol/known-version? versions))]
@@ -259,6 +262,7 @@
      :logging (boolean logging)
      :list-changed (boolean list-changed)
      :subscribe (boolean subscribe)
+     :max-subscriptions max-subscriptions
      ;; open subscriptions/listen streams, by a key of their own
      :listeners (atom {})
      :validate? (boolean validate?)
@@ -644,6 +648,8 @@
           tag {sub-key id}
           listener-key (Object.)
           acked (promise)]
+      (when (>= (count (filter :stop (vals @(:listeners srv)))) (:max-subscriptions srv))
+        (throw (error :internal-error "Server subscription capacity exhausted" {"capacity" "subscriptions"})))
       ;; Register before acknowledging, so a stream acknowledged is a stream
       ;; end-subscriptions! can end; events wait for the acknowledgement,
       ;; which stays the first message on the stream.
@@ -918,6 +924,8 @@
                   :request send-request
                   :server srv
                   :stopped stopped
+                  ;; what this request has sent, for the per-request limits
+                  ::sent (atom {:progress 0 :logs 0 :last-progress nil})
                   :cancelled? (fn [] @cancelled)}
            fail (fn [e]
                   (if (:presa/error (ex-data e))
@@ -965,17 +973,44 @@
   [context method params]
   ((:notify context) (rpc/notification method params)))
 
+(def max-progress-updates
+  "The most progress notifications one request sends; later ones are dropped."
+  1000)
+
+(def max-progress-message-bytes 4096)
+
+(def max-log-messages
+  "The most log messages one request sends; later ones are dropped."
+  1000)
+
+(def max-log-data-bytes 16384)
+
+(defn- utf8-length [^String s] (alength (.getBytes s "UTF-8")))
+
 (defn progress!
   "Report progress on the request of context, when the client asked for it
   with a progressToken in _meta. progress is a number that increases with
-  each call; total and message are optional."
+  each call; total and message are optional. Returns true when the update
+  was sent: an update that does not increase, one past
+  max-progress-updates, or a message longer than
+  max-progress-message-bytes is dropped."
   ([context progress] (progress! context progress {}))
   ([context progress {:keys [total message]}]
-   (when-let [token (get (:meta context) "progressToken")]
-     (notify! context "notifications/progress"
-              (cond-> {"progressToken" token "progress" progress}
-                total (assoc "total" total)
-                message (assoc "message" message))))))
+   (let [token (get (:meta context) "progressToken")
+         sent (::sent context)
+         ok? (and token (number? progress)
+                  (or (nil? message) (<= (utf8-length (str message)) max-progress-message-bytes))
+                  (or (nil? sent)
+                      (let [{:keys [last-progress] n :progress} @sent]
+                        (and (< n max-progress-updates)
+                             (or (nil? last-progress) (> progress last-progress))))))]
+     (when ok?
+       (when sent (swap! sent #(-> % (update :progress inc) (assoc :last-progress progress))))
+       (notify! context "notifications/progress"
+                (cond-> {"progressToken" token "progress" progress}
+                  total (assoc "total" total)
+                  message (assoc "message" message))))
+     (boolean ok?))))
 
 (defn log!
   "Send the client a log message (notifications/message) from the request of
@@ -988,8 +1023,11 @@
    (let [rank (or (protocol/log-level-rank level)
                   (throw (ex-info (str "Unknown log level " level) {:kind :invalid-input :level level})))
          wanted (some-> (:log-level context) protocol/log-level-rank)]
-     (if (and (::logging context) wanted (>= rank wanted))
-       (do (notify! context "notifications/message"
+     (if (and (::logging context) wanted (>= rank wanted)
+              (or (nil? (::sent context)) (< (:logs @(::sent context)) max-log-messages))
+              (<= (utf8-length (json-text data)) max-log-data-bytes))
+       (do (some-> (::sent context) (swap! update :logs inc))
+           (notify! context "notifications/message"
                     (cond-> {"level" level "data" data}
                       logger (assoc "logger" logger)))
            true)

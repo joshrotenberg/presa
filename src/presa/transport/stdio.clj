@@ -24,6 +24,31 @@
     (println (apply str "presa: " parts))
     (flush)))
 
+(def default-max-line-bytes
+  "The default limit on one input message, counting its newline."
+  2000000)
+
+(defn- read-line-limited
+  "The next line of in without its line ending, ::too-long for a line past
+  max-bytes (whose rest is skipped), or nil at the end of the input."
+  [^java.io.BufferedReader in max-bytes]
+  (let [sb (StringBuilder.)]
+    (loop [too-long? false]
+      (let [c (.read in)]
+        (cond
+          (= -1 c) (cond too-long? ::too-long
+                         (pos? (.length sb)) (str sb)
+                         :else nil)
+          (= 10 c) (let [line (str sb)
+                         line (if (str/ends-with? line "\r") (subs line 0 (dec (count line))) line)]
+                     (if (or too-long? (> (inc (alength (.getBytes line "UTF-8"))) max-bytes))
+                       ::too-long
+                       line))
+          too-long? (recur true)
+          ;; a char is at least one byte, so past max-bytes chars is too long
+          (>= (.length sb) max-bytes) (do (.setLength sb 0) (recur true))
+          :else (do (.append sb (char c)) (recur false)))))))
+
 (defn serve!
   "Serve srv, a presa.server/server map, until the input ends, then wait for
   requests in flight and return. Options:
@@ -31,10 +56,12 @@
   - :in   a java.io.Reader to read requests from (default: stdin)
   - :out  a java.io.Writer to write responses to (default: stdout)
   - :log  (fn [& parts]) for diagnostics (default: a line on stderr)
+  - :max-line-bytes  the limit on one message, counting its newline
+           (default 2000000); a longer line gets -32600 and is skipped
 
   Tool handlers run with *out* bound to *err*."
   ([srv] (serve! srv {}))
-  ([srv {:keys [in out log]}]
+  ([srv {:keys [in out log max-line-bytes] :or {max-line-bytes default-max-line-bytes}}]
    (let [in (java.io.BufferedReader. (or in (io/reader System/in :encoding "UTF-8")))
          out (or out (io/writer System/out :encoding "UTF-8"))
          log (or log stderr-log)
@@ -46,15 +73,19 @@
                       (.flush ^java.io.Writer out))))
          {:keys [receive! close!]} (connection/open srv {:send write! :log log})]
      (loop []
-       (if-let [line (.readLine in)]
-         (do (when-not (str/blank? line)
+       (if-let [line (read-line-limited in max-line-bytes)]
+         (do (if (= ::too-long line)
+               (do (log "refused a line longer than " max-line-bytes " bytes")
+                   (write! (rpc/error nil :invalid-request
+                                      (str "Message exceeds the " max-line-bytes "-byte line limit"))))
+               (when-not (str/blank? line)
                (let [message (try (rpc/parse-line line)
                                   (catch Exception e
                                     (log "parse error: " (ex-message e))
                                     ::unparsed))]
                  (if (= ::unparsed message)
                    (write! (rpc/error nil :parse-error "Parse error"))
-                   (receive! message))))
+                   (receive! message)))))
              (recur))
          (close!))))))
 

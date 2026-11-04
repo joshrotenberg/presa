@@ -92,7 +92,8 @@
   [response stateless?]
   (if-let [code (and stateless? (get-in response ["error" "code"]))]
     (case (int code)
-      -32700 400 -32600 400 -32601 404 -32602 400 -32603 500
+      -32700 400 -32600 400 -32601 404 -32602 400
+      -32603 (if (get-in response ["error" "data" "capacity"]) 503 500)
       -32020 400 -32021 400 -32022 400
       200)
     200))
@@ -272,6 +273,25 @@
                             (when cancel! (cancel!))
                             (future-cancel work))))))}))
 
+(def default-max-body-bytes 2000000)
+
+(defn- read-body
+  "The body as a string, or nil when it is longer than max-bytes."
+  [body max-bytes]
+  (if (nil? body)
+    ""
+    (let [^java.io.InputStream in (if (string? body)
+                                    (java.io.ByteArrayInputStream. (.getBytes ^String body "UTF-8"))
+                                    body)
+          out (java.io.ByteArrayOutputStream.)
+          buf (byte-array 8192)]
+      (loop [total 0]
+        (let [n (.read in buf)]
+          (cond
+            (neg? n) (String. (.toByteArray out) "UTF-8")
+            (> (+ total n) max-bytes) nil
+            :else (do (.write out buf 0 n) (recur (+ total n)))))))))
+
 (defn handler
   "A ring handler serving srv. Options:
 
@@ -280,12 +300,14 @@
                       loopback ones; requests without Origin are allowed
   - :allowed-hosts    when given, a set of Host header values (or a
                       predicate) the server accepts; others get 403
+  - :max-body-bytes   the largest request body (default 2000000); a larger
+                      one gets 413
   - :keepalive-ms     how often an idle subscription stream gets a comment,
                       which also finds clients that have gone (default 15000)
   - :log              (fn [& parts]) for diagnostics"
   ([srv] (handler srv {}))
-  ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms]
-         :or {path "/mcp" log (fn [& _]) keepalive-ms 15000}}]
+  ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms max-body-bytes]
+         :or {path "/mcp" log (fn [& _]) keepalive-ms 15000 max-body-bytes default-max-body-bytes}}]
    (let [sessions (atom {})]
      (fn [req]
        (let [origin (header req "origin")
@@ -317,13 +339,18 @@
            (not (every? (media-types (header req "accept")) ["application/json" "text/event-stream"]))
            (rejection 406 :invalid-request "Accept must list application/json and text/event-stream")
 
+           (some-> (:content-length req) (> max-body-bytes))
+           (rejection 413 :invalid-request (str "Request body exceeds " max-body-bytes " bytes"))
+
            :else
-           (let [body (let [s (slurp (:body req) :encoding "UTF-8")]
-                        (if (str/starts-with? s "﻿") (subs s 1) s))
-                 message (try (rpc/parse-line body) (catch Exception _ ::unparsed))
+           (let [body (when-let [s (read-body (:body req) max-body-bytes)]
+                        ;; a leading byte order mark is not part of the JSON
+                        (if (str/starts-with? s (str (char 0xFEFF))) (subs s 1) s))
+                 message (if (nil? body) ::too-large (try (rpc/parse-line body) (catch Exception _ ::unparsed)))
                  session (when sid (get @sessions sid))]
-             (if (= ::unparsed message)
-               (rejection 400 :parse-error "Parse error")
+             (case message
+               ::too-large (rejection 413 :invalid-request (str "Request body exceeds " max-body-bytes " bytes"))
+               ::unparsed (rejection 400 :parse-error "Parse error")
                (case (rpc/kind message)
                  (:response :error)
                  (do (when-let [p (some-> session :outgoing deref (get (get message "id")))]
@@ -385,7 +412,10 @@
   :stop!}; (stop!) stops the server."
   ([srv] (serve! srv {}))
   ([srv {:keys [host port path] :or {host "127.0.0.1" port 0 path "/mcp"} :as opts}]
-   (let [s (hk/run-server (handler srv opts) {:ip host :port port :legacy-return-value? false})
+   (let [s (hk/run-server (handler srv opts)
+                          {:ip host :port port :legacy-return-value? false
+                           ;; presa checks the size itself, with a JSON-RPC body
+                           :max-body (+ 65536 (or (:max-body-bytes opts) default-max-body-bytes))})
          port (hk/server-port s)
          url-host (if (str/includes? host ":") (str "[" host "]") host)]
      {:port port
