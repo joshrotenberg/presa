@@ -110,3 +110,56 @@
     (is (false? (:big-log @results)))
     (is (= server/max-log-messages (:logs @results)))
     (is (= (+ server/max-progress-updates server/max-log-messages) @sent))))
+
+(deftest stdio-line-limit-counts-bytes
+  (let [srv (server/server {:name "t" :version "1" :tools [{:name "x" :handler (fn [_ _] "x")}]})
+        ok (str/trim-newline (rpc/write-line (rpc/request 1 "tools/list" {"_meta" meta-2026})))
+        wide (str/trim-newline (rpc/write-line (rpc/request 2 "tools/call" {"name" "x" "arguments" {"pad" (apply str (repeat 100 "\u00e9"))}
+                                                                             "_meta" meta-2026})))
+        chars (count wide)
+        bytes (alength (.getBytes ^String wide "UTF-8"))
+        limit (+ chars 20)
+        out (java.io.StringWriter.)]
+    (is (< (inc chars) limit) "under the limit by characters")
+    (is (> (inc bytes) limit) "over the limit by UTF-8 bytes")
+    (is (< (inc (count ok)) limit))
+    (stdio/serve! srv {:in (java.io.StringReader. (str wide "\n" ok "\n")) :out out :log (fn [& _]) :max-line-bytes limit})
+    (let [[refused listed] (map rpc/parse-line (str/split-lines (str out)))]
+      (is (= -32600 (get-in refused ["error" "code"])))
+      (is (= (str "Message exceeds the " limit "-byte line limit") (get-in refused ["error" "message"])))
+      (is (= 1 (get listed "id")) "the next line is still read and answered"))))
+
+(defn- post-stream
+  "POST an InputStream of bytes with no Content-Length (a chunked body)."
+  [url ^bytes body-bytes]
+  (let [resp (.send (HttpClient/newHttpClient)
+                    (-> (HttpRequest/newBuilder (URI. url))
+                        (.header "content-type" "application/json")
+                        (.header "accept" "application/json, text/event-stream")
+                        (.header "mcp-protocol-version" "2026-07-28")
+                        (.header "mcp-method" "tools/list")
+                        (.POST (HttpRequest$BodyPublishers/ofInputStream
+                                (reify java.util.function.Supplier
+                                  (get [_] (java.io.ByteArrayInputStream. body-bytes)))))
+                        (.build))
+                    (HttpResponse$BodyHandlers/ofString))]
+    {:status (.statusCode resp) :body (.body resp)}))
+
+(deftest http-body-edge-cases
+  (let [srv (server/server {:name "t" :version "1" :tools [{:name "x" :handler (fn [_ _] "x")}]})
+        {:keys [url stop!]} (http/serve! srv {:max-body-bytes 400})]
+    (try
+      (let [small (json/write-str (rpc/request 1 "tools/list" {"_meta" meta-2026}))
+            big (json/write-str (rpc/request 1 "tools/list" {"_meta" (assoc meta-2026 "pad" (apply str (repeat 500 "a")))}))
+            utf8 #(.getBytes ^String % "UTF-8")
+            bom (byte-array [0xEF 0xBB 0xBF])]
+        (testing "a chunked body past :max-body-bytes is 413"
+          (is (= 200 (:status (post-stream url (utf8 small)))) "a small chunked body is fine")
+          (let [r (post-stream url (utf8 big))]
+            (is (= 413 (:status r)))
+            (is (= -32600 (get-in (json/read-str (:body r)) ["error" "code"])))))
+        (testing "a leading UTF-8 byte order mark is accepted"
+          (let [r (post-stream url (byte-array (concat bom (utf8 small))))]
+            (is (= 200 (:status r)))
+            (is (= "x" (get-in (json/read-str (:body r)) ["result" "tools" 0 "name"]))))))
+      (finally (stop!)))))

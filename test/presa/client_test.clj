@@ -191,3 +191,46 @@
                                                            {:handlers {"roots/list" (roots "mine")}}))))
                 (is (= "client" (client/text (client/call-tool c "ask"))))))
             (finally (client/close c))))))))
+
+(defn- recording
+  "A transport around transport that records every message the client sends."
+  [transport sent]
+  (fn [{:keys [on-message on-close]}]
+    (let [{:keys [send! close!]} (transport {:on-message on-message :on-close on-close})]
+      {:send! (fn [m] (swap! sent conj m) (send! m))
+       :close! close!})))
+
+(deftest request-timeout-cancels
+  (let [started (promise)
+        srv (server/server {:name "t" :version "1" :versions protocol/versions
+                            :tools [{:name "hang" :handler (fn [_ _] (deliver started true) (Thread/sleep 5000) "late")}]})]
+    (doseq [version ["2026-07-28" "2025-11-25"]]
+      (testing version
+        (let [sent (atom [])
+              c (client/connect (recording (client/in-process srv) sent) {:versions [version]})]
+          (try
+            (let [e (try (client/call-tool c "hang" {} {:timeout-ms 200}) (catch Exception e e))
+                  call (first (filter #(= "tools/call" (get % "method")) @sent))
+                  cancelled (first (filter #(= "notifications/cancelled" (get % "method")) @sent))]
+              (is (= :timeout (:kind (ex-data e))))
+              (is (some? cancelled) "the server was told")
+              (is (= {"requestId" (get call "id") "reason" "timeout"} (get cancelled "params"))))
+            (finally (client/close c))))))))
+
+(deftest input-required-forever
+  (let [asked (atom 0)
+        srv (server/server
+             {:name "t" :version "1"
+              :tools [{:name "loop" :handler (fn [_ _]
+                                               (server/input-required {"n" {"method" "elicitation/create"
+                                                                            "params" {"message" "again?" "requestedSchema" {"type" "object"}}}}
+                                                                      {"k" 1}))}]})
+        c (client/connect (client/in-process srv)
+                          {:handlers {"elicitation/create" (fn [_] (swap! asked inc) {"action" "accept" "content" {}})}
+                           :capabilities {"elicitation" {}}})]
+    (try
+      (let [e (try (client/call-tool c "loop") (catch Exception e e))]
+        (is (= :protocol (:kind (ex-data e))))
+        (is (re-find #"asked for input more than 10 times" (ex-message e)))
+        (is (= 10 @asked) "the client answered ten rounds, then gave up"))
+      (finally (client/close c)))))

@@ -206,3 +206,67 @@
       (try
         (is (= :unsupported (:kind (ex-data (try (client/call-tool c "greet") (catch Exception e e))))))
         (finally (client/close c))))))
+
+(deftest request-state-lifetime
+  (testing ":state-ttl-ms expires a token, and the retry is -32602"
+    (let [ttl 20
+          short-srv (server/server {:name "t" :version "1" :state-secret secret :state-ttl-ms ttl
+                                    :tools [{:name "greet" :handler greet-handler}]})
+          started (System/currentTimeMillis)
+          r1 (get (second (server/handle short-srv {} (req 1 "tools/call" {"name" "greet"} all-caps))) "result")
+          retry (fn [] (second (server/handle short-srv {} (req 2 "tools/call"
+                                                                {"name" "greet"
+                                                                 "inputResponses" {"user_name" {"action" "accept" "content" {"name" "A"}}}
+                                                                 "requestState" (get r1 "requestState")}
+                                                                all-caps)))) ]
+      (is (= "input_required" (get r1 "resultType")))
+      ;; wait until the clock is past the expiry, polling rather than sleeping a fixed time
+      (loop [n 0] (when (and (<= (System/currentTimeMillis) (+ started ttl 5)) (< n 1000)) (Thread/sleep 5) (recur (inc n))))
+      (is (= {"code" -32602 "message" "Invalid or expired request state"} (get (retry) "error")))))
+  (testing "a token longer than max-token-length is refused"
+    (let [key (rs/secret-bytes secret)
+          params {"name" "t"}
+          small (rs/sign key "tools/call" params {"pad" "x"} 1000 5000)
+          big (rs/sign key "tools/call" params {"pad" (apply str (repeat (* 2 rs/max-token-length) "x"))} 1000 5000)
+          invalid? (fn [token] (= :invalid-state (:kind (ex-data (try (rs/verify key "tools/call" params token 5500) (catch Exception e e))))))]
+      (is (< (count small) rs/max-token-length))
+      (is (> (count big) rs/max-token-length))
+      (is (= {"pad" "x"} (rs/verify key "tools/call" params small 5500)))
+      (is (invalid? big) "a validly signed token that is too long"))))
+
+(deftest client-request-failures
+  (testing "an initialize-era client that never answers gives :kind :timeout"
+    (let [release (promise)
+          outcome (promise)
+          srv (server/server
+               {:name "t" :version "1" :versions protocol/legacy-versions
+                :tools [{:name "ask"
+                         :handler (fn [_ ctx]
+                                    (let [e (try (server/client-request! ctx "roots/list" {} {:timeout-ms 100})
+                                                 :answered
+                                                 (catch Exception e e))]
+                                      (deliver outcome (if (keyword? e) e (:kind (ex-data e))))
+                                      "done"))}]})
+          c (client/connect (client/in-process srv)
+                            {:capabilities {"roots" {}}
+                             :handlers {"roots/list" (fn [_] @release {"roots" []})}})]
+      (try
+        (client/call-tool c "ask")
+        (is (= :timeout (deref outcome 5000 :no-outcome)))
+        (finally (deliver release true) (client/close c)))))
+  (testing "2026-07-28 throws :unsupported"
+    (let [outcome (promise)
+          srv (server/server
+               {:name "t" :version "1"
+                :tools [{:name "ask"
+                         :handler (fn [_ ctx]
+                                    (let [e (try (server/client-request! ctx "roots/list" {} {:timeout-ms 100})
+                                                 :answered
+                                                 (catch Exception e e))]
+                                      (deliver outcome (if (keyword? e) e (:kind (ex-data e))))
+                                      "done"))}]})
+          c (client/connect (client/in-process srv) {:capabilities {"roots" {}}})]
+      (try
+        (client/call-tool c "ask")
+        (is (= :unsupported (deref outcome 5000 :no-outcome)))
+        (finally (client/close c))))))
