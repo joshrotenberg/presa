@@ -14,9 +14,28 @@ frozen 2026-07-28 requirement set: 37 required server scenarios.
 
 ```sh
 (cd conformance && npm ci --ignore-scripts)   # or set PRESA_CONFORMANCE_RUNNER
-bb conformance                                # every scenario
-bb conformance tools-list                     # one scenario
+bb conformance                                # 2026-07-28, against its baseline
+bb conformance 2025-11-25                     # another lane
+bb conformance 2026-07-28 tools-list          # one scenario, no baseline check
+bb conformance 2026-07-28 --update-baseline   # record a new baseline
 ```
+
+## Baselines
+
+`baselines/<revision>.json` records the status of every check of every
+scenario in a full run (`checkInventory`, as snodo's
+`expected-failures.json` does). A full run is compared with it and fails on
+any difference: a new failure, a check that went missing, and also a check
+that started passing. A baseline therefore changes only through
+`--update-baseline` and a reviewed diff.
+
+## CI
+
+`.github/workflows/conformance.yml` runs the three lanes on every pull
+request and push to main, each against its baseline, and keeps the runner's
+raw results as an artifact. `canary.yml` runs the same lanes weekly against
+the runner's `alpha` dist-tag (`PRESA_CONFORMANCE_UNPINNED=1`) without
+gating anything, to show what a newer runner would change.
 
 Without `conformance/node_modules`, `run.clj` uses the runner in a snodo
 checkout next to this one, or `PRESA_CONFORMANCE_RUNNER` (the path to the

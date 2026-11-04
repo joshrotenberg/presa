@@ -1,0 +1,49 @@
+name: conformance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conformance-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  server:
+    # The official runner's server leg against the fixture, compared check by
+    # check with conformance/baselines/<revision>.json. Any difference fails,
+    # a check that starts passing included: update the baseline in review.
+    name: Server ${{ matrix.revision }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: ["2026-07-28", "2025-11-25", "2025-06-18"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
+        with:
+          bb: latest
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: conformance/package-lock.json
+      - name: Install the pinned runner
+        working-directory: conformance
+        run: npm ci --ignore-scripts
+      - name: Run the lane against its baseline
+        run: bb conformance ${{ matrix.revision }}
+      - name: Keep the runner's raw results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conformance-server-${{ matrix.revision }}
+          path: tmp/conformance/${{ matrix.revision }}/
+          if-no-files-found: warn

@@ -201,6 +201,7 @@ Claude Code names the tools `mcp__presa-hello__echo` and
 bb test          # tests under Babashka
 bb jvm-test      # the same tests on the JVM (clojure -M:test)
 bb conformance   # the official conformance runner against the fixture
+bb lint          # no em dashes, conventional commits since origin/main
 ```
 
 ## License
