@@ -163,6 +163,17 @@ claude mcp add notebook -- bb --config /path/to/presa/bb.edn -m presa.example.no
 codex mcp add notebook -- bb --config /path/to/presa/bb.edn -m presa.example.notebook
 ```
 
+[`examples/presa/example/clojars.clj`](examples/presa/example/clojars.clj) is a
+server for a real API, [Clojars](https://clojars.org): search, artifact
+details, versions, dependencies of any version, groups, users and recent
+releases, with structured results.
+
+```sh
+bb --config /path/to/presa/bb.edn -m presa.example.clojars   # or clojure -M:clojars
+claude mcp add clojars -- bb --config /path/to/presa/bb.edn -m presa.example.clojars
+codex mcp add clojars -- bb --config /path/to/presa/bb.edn -m presa.example.clojars
+```
+
 ## Development
 
 ```sh

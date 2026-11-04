@@ -1,5 +1,5 @@
 (ns presa.example.clojars
-  "An MCP server for the Clojars API (a spike): search Clojars, and look up
+  "An MCP server for the Clojars API: search Clojars, and look up
   artifacts, their versions and dependencies, groups, users and recent
   releases. It reads https://clojars.org/api, the search endpoint and the
   POM files on repo.clojars.org; see
@@ -9,7 +9,11 @@
 
   Artifact names are \"group/name\", or \"name\" when the group is the same
   (\"leiningen\" is leiningen/leiningen). Clojars computes download counts
-  once a day."
+  once a day.
+
+  Dependencies of a version come from its POM, read with patterns rather
+  than an XML parser: property references (${...}) are not resolved, and
+  versions a parent POM manages are not followed."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [presa.protocol :as protocol]

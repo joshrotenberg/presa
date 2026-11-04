@@ -1,5 +1,5 @@
 (ns presa.example.clojars-test
-  "The Clojars MCP server spike against a stubbed fetch function."
+  "The Clojars MCP server against a stubbed fetch function."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
