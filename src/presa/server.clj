@@ -211,9 +211,13 @@
   - :cache  {:ttl-ms n :scope \"private\" or \"public\"}, the caching hints of
       2026-07-28 list, read and discover results (default 0 and private)
   - :validate?  check tool arguments against :input-schema, and structured
-      results against :output-schema, with presa.schema (default true).
+      results against :output-schema (default true).
       Invalid arguments are an isError result the model can read; invalid
       output is an internal error.
+  - :validator  (fn [value schema]) -> nil, or a failure {:path [..]
+      :keyword k :message m}; default presa.schema/validate, a subset of
+      JSON Schema. presa.schema.networknt/validator gives full 2020-12
+      validation on the JVM.
   - :state-secret  the key that signs requestState tokens, a string or bytes
       of at least 32 bytes (default: random for this server map, so tokens
       do not survive a restart or reach another instance)
@@ -261,7 +265,7 @@
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
            versions page-size cache logging log-level validate? state-secret state-ttl-ms
-           list-changed subscribe max-subscriptions on-event required-scopes default-scopes]
+           list-changed subscribe max-subscriptions on-event required-scopes default-scopes validator]
     tasks-opts :tasks
     :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000
          max-subscriptions 256}}]
@@ -308,6 +312,7 @@
      ;; open subscriptions/listen streams, by a key of their own
      :listeners (atom {})
      :validate? (boolean validate?)
+     :validator (or validator schema/validate)
      :state-secret (if state-secret
                      (request-state/secret-bytes state-secret)
                      (request-state/random-secret))
@@ -569,7 +574,7 @@
   (when (and (:validate? srv) (:output-schema tool) (not (get result "isError")))
     (if-not (contains? result "structuredContent")
       (throw (error :internal-error "Tool omitted structured output required by its output schema"))
-      (when-let [invalid (schema/validate (get result "structuredContent") (:output-schema tool))]
+      (when-let [invalid ((:validator srv) (get result "structuredContent") (:output-schema tool))]
         (throw (error :internal-error (str "Tool output failed schema validation " (schema/describe invalid))))))))
 
 ;; Tasks
@@ -661,13 +666,13 @@
                  (throw (error :invalid-params (str "Unknown tool: " tool-name))))
         _ (check-permitted! srv context :tool tool-name (str "tool " tool-name))
         policy (when-not (and (:validate? srv) (:input-schema tool)
-                              (schema/validate arguments (:input-schema tool)))
+                              ((:validator srv) arguments (:input-schema tool)))
                  (task-policy srv tool params context))
         declared? (tasks/declared? (:client-capabilities context))]
     (when (and (= :required policy) (not declared?))
       (throw (error :missing-client-capability "Missing required client capability" tasks/required-capabilities)))
     (if-let [invalid (and (:validate? srv) (:input-schema tool)
-                          (schema/validate arguments (:input-schema tool)))]
+                          ((:validator srv) arguments (:input-schema tool)))]
       (tool-error (str "Invalid arguments " (schema/describe invalid)))
       (if (and declared? (#{:optional :required} policy))
         (start-task! srv tool arguments context)
