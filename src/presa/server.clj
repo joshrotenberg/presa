@@ -562,6 +562,23 @@
   (let [granted (set (get-in context [:auth :scopes]))]
     (every? granted (required-scopes srv kind k))))
 
+(declare match-template)
+
+(defn- may-read?
+  "Whether the caller of context may read uri: the scopes of the resource at
+  uri, else of the template it matches, else the default scopes. srv is a
+  snapshot."
+  [srv context uri]
+  (cond
+    (contains? (:resources srv) uri) (permitted? srv context :resource uri)
+    :else (if-let [t (match-template srv uri)]
+            (permitted? srv context :resource-template (:uri-template t))
+            (every? (set (get-in context [:auth :scopes])) (:default-scopes srv)))))
+
+(def ^:private max-session-subscriptions
+  "The URIs one initialize-era session may subscribe to."
+  1000)
+
 (defn- check-permitted! [srv context kind k label]
   (when-not (permitted? srv context kind k)
     (throw (error :insufficient-scope (str "Insufficient scope for " label)
@@ -721,6 +738,11 @@
 (defn- not-found [uri]
   (error :invalid-params "Resource not found" {"uri" uri}))
 
+(defn- match-template
+  "The template of srv that matches uri, or nil."
+  [srv uri]
+  (some (fn [t] (when ((::match t) uri) t)) (:templates srv)))
+
 (defn- resources-read [srv params context]
   (let [uri (required-name params "uri" "resources/read")]
     (when-not (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" uri)
@@ -798,6 +820,11 @@
                    "ref/resource" (or (some #(when (= (get ref "uri") (:uri-template %)) %) (:templates srv))
                                       (throw (error :invalid-params (str "Unknown resource template: " (get ref "uri")))))
                    (throw (error :invalid-params (str "Unknown ref type: " (get ref "type")))))]
+      ;; completing a prompt or template needs the scopes using it needs
+      (if (= "ref/prompt" (get ref "type"))
+        (check-permitted! srv context :prompt (:name target) (str "prompt " (:name target)))
+        (check-permitted! srv context :resource-template (:uri-template target)
+                          (str "resource template " (:uri-template target))))
       (if-let [f (get-in target [:complete arg-name])]
         (completion-result (f value others context))
         (completion-result [])))))
@@ -838,7 +865,9 @@
                            :when (and (true? (get requested flag))
                                       (get-in caps [kind "listChanged"]))]
                        kind))
-          uris (when (and (:subscribe srv) (seq uris)) (vec uris))
+          ;; only URIs this caller may read; others are dropped
+          uris (when (and (:subscribe srv) (seq uris))
+                 (not-empty (filterv #(may-read? srv context %) uris)))
           scope (get-in context [:auth :subject])
           ;; only tasks this caller may see; unknown ones are dropped
           task-ids (when-let [st (:task-store srv)]
@@ -859,6 +888,7 @@
               :uris uris
               :task-ids (set task-ids)
               :scope scope
+              :auth (:auth context)
               :send (fn [method params]
                       (deref acked 5000 nil)
                       (notify! context method (assoc params "_meta" tag)))
@@ -1103,9 +1133,23 @@
             (throw (error :method-not-found (str "Method not found: " method))))
           (when-not (and (string? uri) (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" uri))
             (throw (error :invalid-params (str method " requires an absolute uri"))))
+          (when (and (= "resources/subscribe" method) (not (may-read? srv extra uri)))
+            (throw (error :insufficient-scope (str "Insufficient scope for resource " uri)
+                          {"error" "insufficient_scope"
+                           "scope" (str/join " " (or (when (contains? (:resources srv) uri)
+                                                       (required-scopes srv :resource uri))
+                                                     (when-let [t (match-template srv uri)]
+                                                       (required-scopes srv :resource-template (:uri-template t)))
+                                                     (:default-scopes srv)))})))
+          (when (and (= "resources/subscribe" method)
+                     (not (contains? @(:listeners srv) [(:session-id session) uri]))
+                     (>= (count (filter #(and (vector? %) (= (:session-id session) (first %))) (keys @(:listeners srv))))
+                         max-session-subscriptions))
+            (throw (error :invalid-params (str "A session may subscribe to at most " max-session-subscriptions " URIs"))))
           (if (= "resources/subscribe" method)
             (swap! (:listeners srv) assoc [(:session-id session) uri]
                    {:kinds #{}
+                    :auth (:auth extra)
                     :uris [uri]
                     :send (let [notify (or (:session-notify extra) (:notify extra))]
                             (fn [method params] (notify (rpc/notification method (not-empty params)))))})
@@ -1373,11 +1417,14 @@
 
 (defn resource-updated!
   "Tell clients listening to uri, or to a resource uri is under, that it
-  changed. Takes the server, or a handler's context."
+  changed. Takes the server, or a handler's context. A listener whose
+  caller may not read uri (see :required-scopes) is not told."
   [srv-or-context uri]
-  (doseq [{:keys [uris send]} (vals @(:listeners (server-of srv-or-context)))
-          :when (some #(or (= % uri) (str/starts-with? uri (str (str/replace % #"/$" "") "/"))) uris)]
-    (try (send "notifications/resources/updated" {"uri" uri}) (catch Exception _))))
+  (let [srv (snapshot (server-of srv-or-context))]
+    (doseq [{:keys [uris send auth]} (vals @(:listeners srv))
+            :when (and (some #(or (= % uri) (str/starts-with? uri (str (str/replace % #"/$" "") "/"))) uris)
+                       (may-read? srv {:auth auth} uri))]
+      (try (send "notifications/resources/updated" {"uri" uri}) (catch Exception _)))))
 
 (defn close-session!
   "Forget what an initialize-era session listens to, when its connection
