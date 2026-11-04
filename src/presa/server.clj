@@ -729,8 +729,10 @@
     (or (some #{requested} legacy) (first legacy))))
 
 (defn- initialize
-  "Settle a session from an initialize request: [session respond]."
-  [srv params]
+  "Settle a session from an initialize request: [session respond]. With
+  :list-changed, the session hears list changes through notify for as long
+  as it lasts (see `close-session!`)."
+  [srv params notify]
   (let [requested (get params "protocolVersion")
         capabilities (get params "capabilities")
         client-info (get params "clientInfo")]
@@ -742,9 +744,14 @@
     (when-not (and (string? requested) (map? capabilities) (map? client-info))
       (throw (error :invalid-params
                     "initialize requires protocolVersion, capabilities and clientInfo")))
-    (let [version (negotiate srv requested)]
+    (let [version (negotiate srv requested)
+          session-id (str (java.util.UUID/randomUUID))]
+      (when (and (:list-changed srv) notify)
+        (swap! (:listeners srv) assoc [session-id :list-changed]
+               {:kinds #{"tools" "prompts" "resources"}
+                :send (fn [method params] (notify (rpc/notification method params)))}))
       [{:version version :client-info client-info :client-capabilities capabilities
-        :log-level (:log-level srv)}
+        :log-level (:log-level srv) :session-id session-id}
        (fn [] (initialize-result srv version))])))
 
 ;; Dispatch
@@ -772,10 +779,25 @@
         [session (fn [] (shape srv context method params (f srv params context)))])
 
       (= "initialize" method)
-      (initialize srv params)
+      (initialize srv params (:notify extra))
 
       (and (= "ping" method) (seq (legacy-versions srv)))
       [session (constantly {})]
+
+      (and (:version session) (#{"resources/subscribe" "resources/unsubscribe"} method))
+      (let [uri (get params "uri")]
+        (when-not (:subscribe srv)
+          (throw (error :method-not-found (str "Method not found: " method))))
+        (when-not (and (string? uri) (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" uri))
+          (throw (error :invalid-params (str method " requires an absolute uri"))))
+        (if (= "resources/subscribe" method)
+          (swap! (:listeners srv) assoc [(:session-id session) uri]
+                 {:kinds #{}
+                  :uris [uri]
+                  :send (let [notify (:notify extra)]
+                          (fn [method params] (notify (rpc/notification method params))))})
+          (swap! (:listeners srv) dissoc [(:session-id session) uri]))
+        [session (constantly {})])
 
       (and (:version session) (= "logging/setLevel" method))
       (let [level (get params "level")]
@@ -941,7 +963,11 @@
      (when-not (contains? (:client-capabilities context) capability)
        (throw (ex-info (str "The client did not declare the " capability " capability")
                        {:kind :unsupported :method method :capability capability}))))
-   (let [response ((:request context) method params timeout-ms)]
+   (let [params (if (and (= "2025-06-18" (:version context)) (= "elicitation/create" method)
+                         (= "form" (get params "mode")))
+                  (dissoc params "mode")
+                  params)
+         response ((:request context) method params timeout-ms)]
      (cond
        (= :presa.connection/closed response)
        (throw (ex-info "The connection closed before the client answered" {:kind :closed :method method}))
@@ -975,9 +1001,16 @@
           :when (some #(or (= % uri) (str/starts-with? uri (str (str/replace % #"/$" "") "/"))) uris)]
     (try (send "notifications/resources/updated" {"uri" uri}) (catch Exception _))))
 
+(defn close-session!
+  "Forget what an initialize-era session listens to, when its connection
+  ends. Transports call this."
+  [srv session]
+  (when-let [id (:session-id session)]
+    (swap! (:listeners srv) (fn [m] (into {} (remove (fn [[k _]] (and (vector? k) (= id (first k))))) m)))))
+
 (defn end-subscriptions!
   "End every open subscriptions/listen stream with its final result, as on
   shutdown."
   [srv]
-  (doseq [{:keys [stop]} (vals @(:listeners srv))]
+  (doseq [{:keys [stop]} (vals @(:listeners srv)) :when stop]
     (deliver stop :ended)))

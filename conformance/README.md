@@ -34,5 +34,19 @@ Totals over all 50 scenarios run: 164 SUCCESS, 30 FAILURE (all Tasks), 1
 SKIPPED (Tasks), 1 INFO (`server-sse-multiple-streams`: every response was
 JSON).
 
-Not measured yet: the client leg, and the server leg at 2025-11-25 and
-2025-06-18.
+### Initialize-era lanes
+
+`bb conformance 2025-11-25` runs the frozen 2025-11-25 requirement set, and
+`bb conformance 2025-06-18` the runner's active suite for that revision
+(it has no frozen set), against the fixture with every revision enabled.
+
+| Lane | Result |
+|---|---|
+| 2025-11-25 (33 scenarios) | all pass: 80 SUCCESS, 4 INFO |
+| 2025-06-18 (27 scenarios) | all pass: 56 SUCCESS |
+
+These include elicitation, sampling and logging during a tool call, which
+presa serves to these clients as requests from server to client, and
+`resources/subscribe` and `unsubscribe`.
+
+Not measured yet: the client leg.

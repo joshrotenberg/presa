@@ -1,7 +1,12 @@
 ;; Run the official MCP conformance runner's server leg against presa's
 ;; fixture and summarize the result.
 ;;
-;;   bb conformance/run.clj [scenario]
+;;   bb conformance/run.clj [revision] [scenario]
+;;
+;; revision is 2026-07-28 (the default), 2025-11-25 or 2025-06-18. The
+;; first two run the runner's frozen requirement set for that revision; for
+;; 2025-06-18, which has none, the runner's active suite runs unscored. The
+;; initialize-era revisions serve the fixture with every revision enabled.
 ;;
 ;; PRESA_CONFORMANCE_RUNNER is the runner's dist/index.js
 ;; (@modelcontextprotocol/conformance@0.2.0-alpha.12); by default it is
@@ -27,14 +32,16 @@
   (when-not (= pinned (get pkg "version"))
     (throw (ex-info (str "The runner is " (get pkg "version") ", not " pinned) {}))))
 
-(def scenario (first *command-line-args*))
+(def revision (or (some #(re-matches #"\d{4}-\d{2}-\d{2}" %) *command-line-args*) "2026-07-28"))
+(def scenario (first (remove #(re-matches #"\d{4}-\d{2}-\d{2}" %) *command-line-args*)))
+(def frozen? (contains? #{"2026-07-28" "2025-11-25"} revision))
 (def out-dir (str (fs/path root "tmp/conformance"
                            (str/replace (str (java.time.Instant/now)) #"[:.]" "-"))))
 (fs/create-dirs out-dir)
 
 (def fixture
   (p/process {:dir root
-              :extra-env {"MCP_PORT" "0" "MCP_FIXTURE_PROFILE" (or (System/getenv "MCP_FIXTURE_PROFILE") "latest")}
+              :extra-env {"MCP_PORT" "0" "MCP_FIXTURE_PROFILE" (if (= "2026-07-28" revision) "latest" "legacy")}
               :err :inherit}
              "bb" "-cp" "src:conformance" "-m" "presa.conformance.fixture"))
 
@@ -47,11 +54,12 @@
       (throw (ex-info (str "The fixture did not start: " line) {})))
     (get ready "url")))
 
-(println "fixture at" url)
+(println "fixture at" url "for" revision)
 
 (let [args (cond-> ["node" runner "server" "--url" url "--output-dir" out-dir]
-             scenario (into ["--scenario" scenario "--spec-version" "2026-07-28"])
-             (not scenario) (into ["--requirements" "2026-07-28"]))
+             scenario (into ["--scenario" scenario "--spec-version" revision])
+             (and (not scenario) frozen?) (into ["--requirements" revision])
+             (and (not scenario) (not frozen?)) (into ["--spec-version" revision "--suite" "active"]))
       result @(apply p/process {:dir root :out :string :err :string} args)]
   (spit (str (fs/path out-dir "runner.log")) (str (:out result) "\n" (:err result)))
   (.close ^java.io.OutputStream (:in fixture))

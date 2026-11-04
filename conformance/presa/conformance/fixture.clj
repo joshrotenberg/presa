@@ -137,6 +137,70 @@
                (some #(server/input-response ctx %) (keys candidates)) "Inputs received"
                (seq supported) (server/input-required supported)
                :else "No supported input"))))
+   ;; Initialize-era scenarios: presa sends these input requests to the
+   ;; client as requests and calls the handler again with the answers.
+   (tool "test_elicitation" "Asks the user for a username and email"
+         (fn [{:strs [message]} ctx]
+           (if-let [r (server/input-response ctx "info")]
+             (str "User response: action=" (get r "action") ", content=" (json/write-str (get r "content")))
+             (server/input-required
+              {"info" (input/elicit (or message "Please provide your information")
+                                    {"type" "object"
+                                     "properties" {"username" {"type" "string" "description" "User's response"}
+                                                   "email" {"type" "string" "description" "User's email address"}}
+                                     "required" ["username" "email"]})})))
+         {:input-schema {"type" "object" "properties" {"message" {"type" "string"}} "required" ["message"]}})
+   (tool "test_sampling" "Asks the client's model to answer a prompt"
+         (fn [{:strs [prompt]} ctx]
+           (if-let [r (server/input-response ctx "answer")]
+             (str "LLM response: " (get-in r ["content" "text"]))
+             (server/input-required
+              {"answer" (input/sample [{"role" "user" "content" (content/text prompt)}] 100)})))
+         {:input-schema {"type" "object" "properties" {"prompt" {"type" "string"}} "required" ["prompt"]}})
+   (tool "test_tool_with_logging" "Logs three messages while it runs"
+         (fn [_ ctx]
+           (server/log! ctx "info" "Tool execution started")
+           (Thread/sleep 50)
+           (server/log! ctx "info" "Tool processing data")
+           (Thread/sleep 50)
+           (server/log! ctx "info" "Tool execution completed")
+           "Tool with logging executed successfully"))
+   (tool "test_elicitation_sep1034_defaults" "Elicits with defaults for every primitive type"
+         (fn [_ ctx]
+           (if-let [r (server/input-response ctx "defaults")]
+             (str "Elicitation completed: action=" (get r "action") ", content=" (json/write-str (get r "content")))
+             (server/input-required
+              {"defaults" (input/elicit "Please review and update the form fields with defaults"
+                                        {"type" "object"
+                                         "properties" {"name" {"type" "string" "description" "User name" "default" "John Doe"}
+                                                       "age" {"type" "integer" "description" "User age" "default" 30}
+                                                       "score" {"type" "number" "description" "User score" "default" 95.5}
+                                                       "status" {"type" "string" "description" "User status"
+                                                                 "enum" ["active" "inactive" "pending"] "default" "active"}
+                                                       "verified" {"type" "boolean" "description" "Verification status" "default" true}}})}))))
+   (tool "test_elicitation_sep1330_enums" "Elicits with every enum schema variant"
+         (fn [_ ctx]
+           (if-let [r (server/input-response ctx "enums")]
+             (str "Elicitation completed: action=" (get r "action") ", content=" (json/write-str (get r "content")))
+             (server/input-required
+              {"enums" (input/elicit "Please select options from the enum fields"
+                                     {"type" "object"
+                                      "properties"
+                                      {"untitledSingle" {"type" "string" "description" "Select one option"
+                                                         "enum" ["option1" "option2" "option3"]}
+                                       "titledSingle" {"type" "string" "description" "Select one option with titles"
+                                                       "oneOf" [{"const" "value1" "title" "First Option"}
+                                                                {"const" "value2" "title" "Second Option"}
+                                                                {"const" "value3" "title" "Third Option"}]}
+                                       "legacyEnum" {"type" "string" "description" "Select one option (legacy)"
+                                                     "enum" ["opt1" "opt2" "opt3"]
+                                                     "enumNames" ["Option One" "Option Two" "Option Three"]}
+                                       "untitledMulti" {"type" "array" "description" "Select multiple options"
+                                                        "items" {"type" "string" "enum" ["option1" "option2" "option3"]}}
+                                       "titledMulti" {"type" "array" "description" "Select multiple options with titles"
+                                                      "items" {"anyOf" [{"const" "value1" "title" "First Choice"}
+                                                                        {"const" "value2" "title" "Second Choice"}
+                                                                        {"const" "value3" "title" "Third Choice"}]}}}})}))))
    (tool "custom_header_region" "Returns its region, which also travels in the Mcp-Param-Region header"
          (fn [{:strs [region]} _] (str "Region: " region))
          {:input-schema {"type" "object"
@@ -208,6 +272,7 @@
                   :versions (if (= "legacy" profile) protocol/versions [protocol/latest-version])
                   :logging true
                   :list-changed true
+                  :subscribe (= "legacy" profile)
                   :tools tools
                   :resources resources
                   :resource-templates resource-templates

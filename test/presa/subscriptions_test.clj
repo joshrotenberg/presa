@@ -89,3 +89,29 @@
       (is (= -32602 (err nil)))
       (is (= -32602 (err {"toolsListChanged" "yes"})))
       (is (= -32602 (err {"resourceSubscriptions" ["relative"]}))))))
+
+(deftest initialize-era-notifications
+  (let [srv (make-server)
+        sent (atom [])
+        notify #(swap! sent conj %)
+        [session] (server/handle srv {} (rpc/request 0 "initialize" {"protocolVersion" "2025-11-25" "capabilities" {}
+                                                                     "clientInfo" {"name" "c" "version" "0"}})
+                                 {:notify notify})
+        call (fn [message] (second (server/handle srv session message {:notify notify})))]
+    (testing "list changes reach the session without a subscription"
+      (server/list-changed! srv "tools")
+      (is (= [{"jsonrpc" "2.0" "method" "notifications/tools/list_changed"}] @sent)))
+    (testing "resources/subscribe and unsubscribe"
+      (reset! sent [])
+      (is (= {} (get (call (rpc/request 1 "resources/subscribe" {"uri" "file:///docs"})) "result")))
+      (server/resource-updated! srv "file:///docs")
+      (is (= [{"jsonrpc" "2.0" "method" "notifications/resources/updated" "params" {"uri" "file:///docs"}}] @sent))
+      (is (= {} (get (call (rpc/request 2 "resources/unsubscribe" {"uri" "file:///docs"})) "result")))
+      (reset! sent [])
+      (server/resource-updated! srv "file:///docs")
+      (is (= [] @sent)))
+    (testing "closing the session forgets it"
+      (server/close-session! srv session)
+      (reset! sent [])
+      (server/list-changed! srv "tools")
+      (is (= [] @sent)))))

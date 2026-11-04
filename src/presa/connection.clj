@@ -83,6 +83,7 @@
                      nil)))]
     {:receive! receive!
      :close! (fn []
+               (server/close-session! srv @session)
                (doseq [[_ p] @outgoing] (deliver p ::closed))
                ;; subscription streams never finish on their own
                (doseq [{:keys [method cancel! work]} (vals @running)

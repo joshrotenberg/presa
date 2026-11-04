@@ -301,8 +301,10 @@
            (rejection 403 :invalid-request "Host is not allowed")
 
            (and (= :delete (:request-method req)) sid)
-           (if (get @sessions sid)
-             (do (swap! sessions dissoc sid) {:status 204})
+           (if-let [entry (get @sessions sid)]
+             (do (swap! sessions dissoc sid)
+                 (server/close-session! srv @(:session entry))
+                 {:status 204})
              (rejection 404 :invalid-request "Session not found"))
 
            (not= :post (:request-method req))
