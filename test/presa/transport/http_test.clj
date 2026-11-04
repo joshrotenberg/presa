@@ -6,7 +6,8 @@
             [presa.input :as input]
             [presa.protocol :as protocol]
             [presa.server :as server]
-            [presa.transport.http :as http])
+            [presa.transport.http :as http]
+            [org.httpkit.server :as hk])
   (:import (java.net URI)
            (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers HttpResponse$BodyHandlers)))
 
@@ -204,3 +205,34 @@
                  {"properties" {"a" {"type" "string" "x-mcp-header" ""}}}
                  {"properties" {"a" {"type" "string" "x-mcp-header" "X"} "b" {"type" "string" "x-mcp-header" "x"}}}]]
       (is (= :presa.transport.http/invalid (http/param-headers bad)) (pr-str bad)))))
+
+(deftest a-request-after-initialized-waits-for-the-session-stream
+  ;; A slow notifications/initialized: before the fix, a request sent right
+  ;; after it was posted while it was still in flight, ahead of the session
+  ;; GET stream, which then opened at an arbitrary later time.
+  (let [order (atom [])
+        server (hk/run-server
+                (fn [req]
+                  (case (:request-method req)
+                    :delete {:status 200}
+                    :get
+                    (do (swap! order conj "GET")
+                        (hk/as-channel req {:on-open (fn [ch] (hk/send! ch {:status 200 :headers {"content-type" "text/event-stream"}} false))}))
+                    (let [{:strs [id method]} (json/read-str (slurp (:body req)))
+                          reply (fn [result] {:status 200 :headers {"content-type" "application/json" "mcp-session-id" "s1"}
+                                              :body (json/write-str {"jsonrpc" "2.0" "id" id "result" result})})]
+                      (swap! order conj method)
+                      (case method
+                        "initialize" (reply {"protocolVersion" "2025-11-25" "capabilities" {"tools" {}}
+                                             "serverInfo" {"name" "slow" "version" "1"}})
+                        "notifications/initialized" (do (Thread/sleep 300) {:status 202})
+                        (reply {"tools" []})))))
+                {:port 0 :legacy-return-value? false})
+        url (str "http://127.0.0.1:" (hk/server-port server) "/mcp")]
+    (try
+      (let [c (client/connect (http/url url) {:versions ["2025-11-25"]})]
+        (try
+          (client/list-tools c)
+          (is (= ["initialize" "notifications/initialized" "GET" "tools/list"] @order))
+          (finally (client/close c))))
+      (finally (hk/server-stop! server)))))
