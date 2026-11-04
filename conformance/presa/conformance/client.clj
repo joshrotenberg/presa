@@ -87,7 +87,14 @@
          (get ctx "client_id") (assoc :client-id (get ctx "client_id"))
          (get ctx "client_secret") (assoc :client-secret (get ctx "client_secret"))
          (get ctx "private_key_pem") (assoc :private-key-pem (get ctx "private_key_pem"))
-         (str/starts-with? scenario "auth/client-credentials") (assoc :grant :client-credentials))))))
+         (str/starts-with? scenario "auth/client-credentials") (assoc :grant :client-credentials)
+         ;; workload identity: the context's workload JWT is the assertion
+         (get ctx "valid_jwt") (assoc :grant :jwt-bearer :assertion (get ctx "valid_jwt"))
+         ;; enterprise-managed: the assertion is an ID-JAG from the IdP
+         (get ctx "idp_id_token") (assoc :grant :jwt-bearer
+                                         :assertion (auth-client/id-jag {:token-endpoint (get ctx "idp_token_endpoint")
+                                                                         :id-token (get ctx "idp_id_token")
+                                                                         :client-id (get ctx "idp_client_id")})))))))
 
 (defn run [url]
   (let [protocol (or (System/getenv "PRESA_CLIENT_PROTOCOL") "2026-07-28")

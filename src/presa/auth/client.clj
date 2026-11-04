@@ -250,6 +250,8 @@
 
 (defn- origin-of [url] (let [u (URI. (str url))] (str (.getScheme u) "://" (.getRawAuthority u))))
 
+(def ^:private jwt-bearer-grant "urn:ietf:params:oauth:grant-type:jwt-bearer")
+
 (defn- token-request!
   "POST form to the token endpoint with the client's authentication, and a
   DPoP proof when the authorization server takes them (retried once with
@@ -264,7 +266,7 @@
                                                 (.getBytes (str (URLEncoder/encode client-id "UTF-8") ":"
                                                                 (URLEncoder/encode (str client-secret) "UTF-8"))
                                                            "UTF-8"))))
-        form (cond-> (assoc form "client_id" client-id)
+        form (cond-> (if client-id (assoc form "client_id" client-id) form)
                (= "client_secret_post" method) (assoc "client_secret" client-secret)
                (= "private_key_jwt" method)
                (assoc "client_assertion_type" "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
@@ -357,9 +359,23 @@
                                                 "code_verifier" verifier
                                                 "resource" resource})]))
 
+(declare obtain*)
+
 (defn- obtain!
   "Run a flow for a challenge and store the token. step-up names the new
-  scopes a 403 asked for."
+  scopes a 403 asked for. A refused JWT-bearer grant is final: the provider
+  keeps the failure and throws it again without asking the authorization
+  server (RFC 7523 errors are not retried)."
+  [state opts challenge step-up]
+  (if-let [e (::refused @state)]
+    (throw e)
+    (try (obtain* state opts challenge step-up)
+         (catch clojure.lang.ExceptionInfo e
+           (when (and (= :jwt-bearer (:grant opts)) (#{:token :assertion :token-exchange} (:step (ex-data e))))
+             (swap! state assoc ::refused e))
+           (throw e)))))
+
+(defn- obtain*
   [state opts challenge step-up]
   (let [server-url (:resource opts)
         prm (discover-prm server-url challenge)
@@ -374,11 +390,27 @@
         ;; a token from another authorization server is not reused
         granted (when (= issuer (:issuer current)) (:scopes current))
         scopes (select-scopes opts challenge prm as granted step-up)
-        [identity doc] (if (= :client-credentials (:grant opts))
+        [identity doc] (case (:grant opts)
+                         :client-credentials
                          (let [identity {:client-id (:client-id opts) :client-secret (:client-secret opts)}]
                            [identity (token-request! opts as identity
                                                      (cond-> {"grant_type" "client_credentials" "resource" resource}
                                                        (seq scopes) (assoc "scope" (str/join " " scopes))))])
+
+                         ;; RFC 7523: no registration, and an error is final
+                         :jwt-bearer
+                         (let [identity {:client-id (:client-id opts) :client-secret (:client-secret opts)}
+                               a (:assertion opts)
+                               assertion (if (fn? a)
+                                           (a {:issuer issuer :resource resource :token-endpoint (get as "token_endpoint")})
+                                           a)]
+                           (when-not (and (string? assertion) (not (str/blank? assertion)))
+                             (fail :assertion "The JWT-bearer grant has no assertion"))
+                           [identity (token-request! opts as identity
+                                                     (cond-> {"grant_type" jwt-bearer-grant "assertion" assertion
+                                                              "resource" resource}
+                                                       (seq scopes) (assoc "scope" (str/join " " scopes))))])
+
                          (authorize! state opts as prm issuer scopes))
         token {:access-token (get doc "access_token")
                :refresh-token (get doc "refresh_token")
@@ -409,7 +441,16 @@
                    lists it (default true)
   - :grant         :client-credentials for the client credentials grant
                    (with :client-secret or :private-key-pem, an EC P-256
-                   PKCS#8 PEM for private_key_jwt)
+                   PKCS#8 PEM for private_key_jwt), or :jwt-bearer for the
+                   JWT-bearer grant (RFC 7523, workload identity) with
+                   :assertion
+  - :assertion     for :jwt-bearer: the assertion, or (fn [{:issuer
+                   :resource :token-endpoint}]) returning it, such as
+                   `id-jag` for enterprise-managed authorization. No client
+                   is registered; :client-id (and :client-secret) are sent
+                   when given. A refused grant fails the request, and every
+                   later one, with no retry and no other grant (make a new
+                   provider to try again)
   - :auth-method   force a token endpoint auth method
   - :dpop          false to never use DPoP (RFC 9449). Otherwise the provider
                    sends DPoP proofs (ES256, a key per provider) when the
@@ -447,8 +488,8 @@
                   (and access-token (or (nil? expires-at) (< (System/currentTimeMillis) (- expires-at 30000))))
                   access-token
 
-                  ;; a client credentials client can get a token up front
-                  (= :client-credentials (:grant opts))
+                  ;; a client without a user can get a token up front
+                  (#{:client-credentials :jwt-bearer} (:grant opts))
                   (locking lock (obtain! state opts nil nil))
 
                   :else nil)))
@@ -468,6 +509,36 @@
                                                {:scopes (vec asked)})
                             :else (obtain! state opts challenge new)))
                         (obtain! state opts challenge nil))))))}))
+
+(defn id-jag
+  "An :assertion function for enterprise-managed authorization (SEP-990):
+  it exchanges an ID token at the identity provider's token endpoint for an
+  Identity Assertion JWT Authorization Grant (RFC 8693 token exchange), for
+  the authorization server and resource the flow found. Options:
+  :token-endpoint and :id-token (required), :client-id and :client-secret
+  (the client at the identity provider, sent in the form when given),
+  :scopes."
+  [{:keys [token-endpoint id-token client-id client-secret scopes]}]
+  (when-not (and token-endpoint id-token)
+    (throw (ex-info "id-jag needs :token-endpoint and :id-token" {:kind :invalid-input})))
+  (fn [{:keys [issuer resource]}]
+    (let [r (http "POST" token-endpoint
+                  {:headers {"content-type" "application/x-www-form-urlencoded" "accept" "application/json"}
+                   :body (form-encode (cond-> {"grant_type" "urn:ietf:params:oauth:grant-type:token-exchange"
+                                               "subject_token" id-token
+                                               "subject_token_type" "urn:ietf:params:oauth:token-type:id_token"
+                                               "requested_token_type" "urn:ietf:params:oauth:token-type:id-jag"
+                                               "audience" issuer
+                                               "resource" resource}
+                                        client-id (assoc "client_id" client-id)
+                                        client-secret (assoc "client_secret" client-secret)
+                                        (seq scopes) (assoc "scope" (str/join " " scopes))))})
+          doc (json-body r)]
+      (when-not (and (= 200 (:status r)) (string? (get doc "access_token"))
+                     (= "urn:ietf:params:oauth:token-type:id-jag" (get doc "issued_token_type")))
+        (fail :token-exchange (str "The token exchange at the identity provider failed with " (:status r))
+              {:error (get doc "error")}))
+      (get doc "access_token"))))
 
 (defn loopback-authorizer
   "An authorizer for the code flow: a listener on 127.0.0.1 (a free port, or

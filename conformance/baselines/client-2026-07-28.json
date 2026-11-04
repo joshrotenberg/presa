@@ -101,20 +101,16 @@
       "token-request" : [ "SUCCESS" ]
     },
     "auth/enterprise-managed-authorization" : {
-      "authorization-request" : [ "SUCCESS" ],
       "authorization-server-metadata" : [ "SUCCESS" ],
-      "complete-flow-jwt-bearer" : [ "FAILURE" ],
-      "complete-flow-token-exchange" : [ "FAILURE" ],
-      "incoming-auth-request" : [ "INFO", "INFO", "INFO" ],
-      "incoming-request" : [ "INFO", "INFO" ],
-      "outgoing-auth-response" : [ "INFO", "INFO", "INFO" ],
-      "outgoing-response" : [ "INFO", "INFO" ],
-      "pkce-code-challenge-sent" : [ "SUCCESS" ],
-      "pkce-code-verifier-sent" : [ "SUCCESS" ],
-      "pkce-s256-method-used" : [ "SUCCESS" ],
-      "pkce-verifier-matches-challenge" : [ "SUCCESS" ],
+      "complete-flow-jwt-bearer" : [ "SUCCESS" ],
+      "complete-flow-token-exchange" : [ "SUCCESS" ],
+      "incoming-auth-request" : [ "INFO", "INFO" ],
+      "incoming-request" : [ "INFO", "INFO", "INFO", "INFO" ],
+      "outgoing-auth-response" : [ "INFO", "INFO" ],
+      "outgoing-response" : [ "INFO", "INFO", "INFO", "INFO" ],
       "prm-pathbased-requested" : [ "SUCCESS" ],
-      "token-request" : [ "SUCCESS" ]
+      "token-request" : [ "SUCCESS" ],
+      "valid-bearer-token" : [ "SUCCESS", "SUCCESS", "SUCCESS" ]
     },
     "auth/iss-normalized" : {
       "authorization-request" : [ "SUCCESS" ],
@@ -524,19 +520,15 @@
       "valid-bearer-token" : [ "SUCCESS", "SUCCESS", "SUCCESS" ]
     },
     "auth/wif-jwt-bearer" : {
-      "authorization-request" : [ "SUCCESS" ],
       "authorization-server-metadata" : [ "SUCCESS" ],
-      "incoming-auth-request" : [ "INFO", "INFO", "INFO" ],
-      "incoming-request" : [ "INFO", "INFO" ],
-      "outgoing-auth-response" : [ "INFO", "INFO", "INFO" ],
-      "outgoing-response" : [ "INFO", "INFO" ],
-      "pkce-code-challenge-sent" : [ "SUCCESS" ],
-      "pkce-code-verifier-sent" : [ "SUCCESS" ],
-      "pkce-s256-method-used" : [ "SUCCESS" ],
-      "pkce-verifier-matches-challenge" : [ "SUCCESS" ],
+      "incoming-auth-request" : [ "INFO", "INFO" ],
+      "incoming-request" : [ "INFO", "INFO", "INFO", "INFO" ],
+      "outgoing-auth-response" : [ "INFO", "INFO" ],
+      "outgoing-response" : [ "INFO", "INFO", "INFO", "INFO" ],
       "prm-pathbased-requested" : [ "SUCCESS" ],
       "token-request" : [ "SUCCESS" ],
-      "wif-grant-type" : [ "FAILURE" ]
+      "valid-bearer-token" : [ "SUCCESS", "SUCCESS", "SUCCESS" ],
+      "wif-assertion-verified" : [ "SUCCESS" ]
     },
     "http-custom-headers" : {
       "sep-2243-client-base64-unsafe" : [ "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS" ],

@@ -80,14 +80,14 @@ would; see its namespace docstring.
 
 | Lane | Result |
 |---|---|
-| client 2026-07-28 (39 scenarios) | 37 pass: every scored one, and the DPoP extension scenarios; `http-standard-headers` has 2 SKIPPED checks, its `initialize` checks, which a 2026-07-28 client never reaches |
-| client 2025-11-25 (25 scenarios) | 23 pass: every scored one, and the DPoP extension scenarios |
+| client 2026-07-28 (39 scenarios) | all pass, the extension scenarios included; `http-standard-headers` has 2 SKIPPED checks, its `initialize` checks, which a 2026-07-28 client never reaches |
+| client 2025-11-25 (25 scenarios) | all pass, the extension scenarios included |
 
 With `presa.auth.client` the scored `auth/*` scenarios pass too: all 25 at
 2026-07-28 and all 14 at 2025-11-25, plus the two client credentials
-extension scenarios and the two DPoP ones (`auth/dpop`, `auth/dpop-nonce`).
-The enterprise-managed authorization and workload identity extension
-scenarios fail, as presa implements neither; the baselines record that.
+extension scenarios, the two DPoP ones (`auth/dpop`, `auth/dpop-nonce`),
+workload identity (`auth/wif-jwt-bearer`) and enterprise-managed
+authorization (`auth/enterprise-managed-authorization`).
 
 ## Wire schema
 
