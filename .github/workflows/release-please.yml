@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    # Keeps a release PR open with the next version and its changelog;
+    # merging it tags vX.Y.Z on main and creates the GitHub release.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # A PR opened with the workflow token starts no other workflows, so the
+      # release PR's CI would not run. RELEASE_PLEASE_TOKEN (a fine-grained
+      # token with read and write Contents, Pull requests and Issues on this
+      # repository) avoids that; without it the workflow token is used. See
+      # RELEASING.md.
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
