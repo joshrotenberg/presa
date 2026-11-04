@@ -17,6 +17,7 @@
             [clojure.string :as str]
             [org.httpkit.server :as hk]
             [presa.auth :as auth]
+            [presa.auth.client :as auth-client]
             [presa.jsonrpc :as rpc]
             [presa.protocol :as protocol]
             [presa.server :as server])
@@ -590,10 +591,21 @@
 
 (defn url
   "A presa.client transport to the Streamable HTTP endpoint at endpoint.
-  Options: :headers (extra headers on every request, such as
-  Authorization), :connect-timeout-ms (default 10000), :log."
+  Options:
+
+  - :headers         extra headers on every request
+  - :token-provider  OAuth: {:token (fn [ctx]) :refresh (fn [refusal])}, such
+                     as presa.auth.client/provider. Its token goes in
+                     Authorization: Bearer; a 401, or a 403 insufficient_scope,
+                     goes to :refresh (with :status, :challenge, :token) and the
+                     request is sent once more. A second refusal is -32000 with
+                     the status and challenge.
+  - :connect-timeout-ms  (default 10000)
+  - :log             (fn [& parts]) for diagnostics"
   ([endpoint] (url endpoint {}))
-  ([endpoint {:keys [headers connect-timeout-ms log] :or {connect-timeout-ms 10000 log (fn [& _])}}]
+  ([endpoint {:keys [headers connect-timeout-ms log token-provider] :or {connect-timeout-ms 10000 log (fn [& _])}}]
+   (when (and token-provider (some #(= "authorization" (str/lower-case (str %))) (keys headers)))
+     (throw (ex-info "Pass a token provider or an Authorization header, not both" {:kind :invalid-input})))
    (fn [{:keys [on-message on-close]}]
      (let [client (-> (HttpClient/newBuilder)
                       (.version HttpClient$Version/HTTP_1_1)
@@ -626,6 +638,8 @@
                                         (.GET))]
                         (when-let [sid (:session-id @state)] (.header builder "mcp-session-id" sid))
                         (when-let [v (:version @state)] (.header builder "mcp-protocol-version" v))
+                        (when-let [t (and token-provider ((:token token-provider) {:url endpoint}))]
+                          (.header builder "authorization" (str "Bearer " t)))
                         (when last-event-id (.header builder "last-event-id" last-event-id))
                         (doseq [[k v] headers] (.header builder (str k) (str v)))
                         (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))
@@ -660,15 +674,50 @@
                                        (when-not @closed
                                          (Thread/sleep (long (or (:retry-ms seen) 1000)))
                                          (recur seen))))))))
+           send-post (fn [message token]
+                       (let [builder (HttpRequest/newBuilder uri)]
+                         (doseq [[k v] (merge (request-headers message state annotations) headers)]
+                           (.header builder (str k) (str v)))
+                         (when token (.header builder "authorization" (str "Bearer " token)))
+                         (.POST builder (HttpRequest$BodyPublishers/ofString (write-json message)))
+                         (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))))
+           challenge-of (fn [^HttpResponse resp]
+                          (let [status (.statusCode resp)
+                                header (.orElse (.firstValue (.headers resp) "www-authenticate") nil)
+                                c (when header (auth-client/bearer-challenge header))]
+                            (when (or (= 401 status)
+                                      (and (= 403 status) (= "insufficient_scope" (get-in c [:params "error"]))))
+                              {:status status :challenge c :header header})))
+           refused (fn [id {:keys [status header]} & [cause]]
+                     (when (some? id)
+                       (deliver! (rpc/error id -32000 (str "HTTP " status (when cause (str ": " cause)))
+                                            (cond-> {"status" status}
+                                              header (assoc "challenge" header))))))
            post (fn [message]
-                  (let [builder (HttpRequest/newBuilder uri)]
-                    (doseq [[k v] (merge (request-headers message state annotations) headers)]
-                      (.header builder (str k) (str v)))
-                    (.POST builder (HttpRequest$BodyPublishers/ofString (write-json message)))
-                    (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))
-                          status (.statusCode resp)
-                          content-type (str/lower-case (.orElse (.firstValue (.headers resp) "content-type") ""))
-                          id (get message "id")]
+                  (let [id (get message "id")
+                        token (when token-provider ((:token token-provider) {:url endpoint}))
+                        first-try (send-post message token)
+                        ;; a 401, or a 403 asking for more scope, goes to the
+                        ;; token provider once, then the request is sent again
+                        ^HttpResponse resp
+                        (if-let [refusal (challenge-of first-try)]
+                          (do (.close ^java.io.InputStream (.body first-try))
+                              (if-not token-provider
+                                (do (refused id refusal) nil)
+                                (let [new-token (try ((:refresh token-provider)
+                                                      (assoc refusal :token token :url endpoint))
+                                                     (catch Exception e
+                                                       (refused id refusal (or (ex-message e) "authorization failed"))
+                                                       ::failed))]
+                                  (when-not (= ::failed new-token)
+                                    (let [again (send-post message new-token)]
+                                      (if-let [refusal (challenge-of again)]
+                                        (do (.close ^java.io.InputStream (.body again)) (refused id refusal) nil)
+                                        again))))))
+                          first-try)]
+                    (when resp
+                    (let [status (.statusCode resp)
+                          content-type (str/lower-case (.orElse (.firstValue (.headers resp) "content-type") ""))]
                       (when-let [sid (.orElse (.firstValue (.headers resp) "mcp-session-id") nil)]
                         (swap! state assoc :session-id sid))
                       (cond
@@ -696,7 +745,7 @@
                         :else
                         (do (.close ^java.io.InputStream (.body resp))
                             (when (and (some? id) (not (<= 200 status 299)))
-                              (deliver! (rpc/error id -32000 (str "HTTP " status) {"status" status}))))))))
+                              (deliver! (rpc/error id -32000 (str "HTTP " status) {"status" status})))))))))
            list-tools! (fn [message]
                          ;; Learn the tools' x-mcp-header annotations before
                          ;; calling one this transport has not seen listed.
@@ -752,6 +801,9 @@
                       (try
                         (.send client (-> (HttpRequest/newBuilder uri)
                                           (.header "mcp-session-id" sid)
+                                          (as-> b (if-let [t (and token-provider ((:token token-provider) {:url endpoint}))]
+                                                    (.header b "authorization" (str "Bearer " t))
+                                                    b))
                                           (.DELETE)
                                           (.build))
                                (HttpResponse$BodyHandlers/discarding))
