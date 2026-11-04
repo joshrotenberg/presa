@@ -303,7 +303,7 @@
   [{:keys [state] :as conn} message]
   (let [meta (get-in message ["params" "_meta"])]
     (loop [cursor nil pages 0]
-      (let [id (str "presa-tools-" (swap! state update :list-id (fnil inc 0)) "-" pages)
+      (let [id (str "presa-tools-" (:list-id (swap! state update :list-id (fnil inc 0))) "-" pages)
             result (atom nil)
             request (rpc/request id "tools/list" (cond-> {}
                                                    meta (assoc "_meta" (dissoc meta "progressToken"))
