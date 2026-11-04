@@ -245,13 +245,16 @@
     {:info (cond-> {"name" name "version" version}
              title (assoc "title" title))
      :instructions instructions
-     :tools tools
-     :tool-order tool-order
-     :resources resources
-     :resource-order resource-order
-     :templates templates
-     :prompts prompts
-     :prompt-order prompt-order
+     ;; the definitions, which add-tool! and friends change while serving;
+     ;; each request reads one snapshot (see `snapshot`)
+     :catalog (atom {:tools tools
+                     :tool-order tool-order
+                     :resources resources
+                     :resource-order resource-order
+                     :templates templates
+                     :prompts prompts
+                     :prompt-order prompt-order
+                     :catalog-version {"tools" 0 "resources" 0 "prompts" 0}})
      :page-size page-size
      :logging (boolean logging)
      :list-changed (boolean list-changed)
@@ -267,6 +270,11 @@
      :cache {:ttl-ms (or (:ttl-ms cache) 0) :scope (or (:scope cache) "private")}
      ;; newest first, as presa.protocol/versions orders them
      :versions (filterv (set versions) protocol/versions)}))
+
+(defn- snapshot
+  "srv with the current definitions merged in, read once."
+  [srv]
+  (if-let [c (:catalog srv)] (merge srv @c) srv))
 
 (defn- stateless-versions [srv] (filterv protocol/stateless? (:versions srv)))
 (defn- legacy-versions [srv] (filterv (complement protocol/stateless?) (:versions srv)))
@@ -334,34 +342,45 @@
 
 ;; Pagination
 
-(defn- encode-cursor [method offset]
-  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
-                   (.getBytes (str "presa1|" method "|" offset) "UTF-8")))
+(def ^:private list-kinds
+  {"tools/list" "tools" "resources/list" "resources"
+   "resources/templates/list" "resources" "prompts/list" "prompts"})
 
-(defn- decode-cursor [method cursor]
+(defn- encode-cursor [method offset version]
+  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
+                   (.getBytes (str "presa1|" method "|" offset "|" version) "UTF-8")))
+
+(defn- decode-cursor
+  "[offset catalog-version] from a cursor for method."
+  [method cursor]
   (let [invalid #(throw (error :invalid-params "Invalid pagination cursor"))]
     (when-not (string? cursor)
       (throw (error :invalid-params "Cursor must be a string")))
     (when-not (<= (count cursor) 512) (invalid))
     (let [decoded (try (String. (.decode (Base64/getUrlDecoder) ^String cursor) "UTF-8")
                        (catch Exception _ (invalid)))
-          [prefix m offset] (str/split decoded #"\|" 3)
-          offset (when (and offset (re-matches #"\d{1,9}" offset)) (parse-long offset))]
-      (if (and (= "presa1" prefix) (= method m) offset)
-        offset
+          [prefix m offset version] (str/split decoded #"\|" 4)
+          offset (when (and offset (re-matches #"\d{1,9}" offset)) (parse-long offset))
+          version (when (and version (re-matches #"\d{1,18}" version)) (parse-long version))]
+      (if (and (= "presa1" prefix) (= method m) offset version)
+        [offset version]
         (invalid)))))
 
 (defn- page
   "[items next-cursor] for one page of items."
   [srv method params items]
-  (let [offset (if (contains? params "cursor") (decode-cursor method (get params "cursor")) 0)
+  (let [current (get-in srv [:catalog-version (list-kinds method)] 0)
+        [offset version] (if (contains? params "cursor")
+                           (decode-cursor method (get params "cursor"))
+                           [0 current])
         size (or (:page-size srv) (count items))
         items (vec items)]
-    (when (> offset (count items))
+    ;; a cursor from before the list changed would skip or repeat items
+    (when (or (not= version current) (> offset (count items)))
       (throw (error :invalid-params "Pagination cursor has expired")))
     (let [end (min (count items) (+ offset size))]
       [(subvec items offset end)
-       (when (< end (count items)) (encode-cursor method end))])))
+       (when (< end (count items)) (encode-cursor method end current))])))
 
 (defn- paged [srv method params k items]
   (let [[items cursor] (page srv method params items)]
@@ -771,59 +790,60 @@
 (defn- request
   "[session respond] for a request with an id."
   [srv session {:strs [id method params] :as message} extra]
-  (when-not (bounded-id? id)
-    (throw (error :invalid-request "Request id must be a string of at most 256 bytes or an int64 integer")))
-  (when (and (contains? message "params") (not (map? params)))
-    (throw (error :invalid-params "Request params must be an object")))
-  (let [extra (assoc extra ::logging (:logging srv))
-        params (or params {})
-        meta (request-meta params)
-        version-key (:protocol-version protocol/meta-keys)]
-    (cond
-      (contains? meta version-key)
-      (let [context (merge (stateless-context srv meta) extra {:request-id id})
-            f (method-fn srv method false)
-            context (merge context (input-admission srv method params))]
-        [session (fn [] (shape srv context method params (f srv params context)))])
+  (let [srv (snapshot srv)]
+    (when-not (bounded-id? id)
+      (throw (error :invalid-request "Request id must be a string of at most 256 bytes or an int64 integer")))
+    (when (and (contains? message "params") (not (map? params)))
+      (throw (error :invalid-params "Request params must be an object")))
+    (let [extra (assoc extra ::logging (:logging srv))
+          params (or params {})
+          meta (request-meta params)
+          version-key (:protocol-version protocol/meta-keys)]
+      (cond
+        (contains? meta version-key)
+        (let [context (merge (stateless-context srv meta) extra {:request-id id})
+              f (method-fn srv method false)
+              context (merge context (input-admission srv method params))]
+          [session (fn [] (shape srv context method params (f srv params context)))])
 
-      (= "initialize" method)
-      (initialize srv params (:notify extra))
+        (= "initialize" method)
+        (initialize srv params (:notify extra))
 
-      (and (= "ping" method) (seq (legacy-versions srv)))
-      [session (constantly {})]
+        (and (= "ping" method) (seq (legacy-versions srv)))
+        [session (constantly {})]
 
-      (and (:version session) (#{"resources/subscribe" "resources/unsubscribe"} method))
-      (let [uri (get params "uri")]
-        (when-not (:subscribe srv)
-          (throw (error :method-not-found (str "Method not found: " method))))
-        (when-not (and (string? uri) (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" uri))
-          (throw (error :invalid-params (str method " requires an absolute uri"))))
-        (if (= "resources/subscribe" method)
-          (swap! (:listeners srv) assoc [(:session-id session) uri]
-                 {:kinds #{}
-                  :uris [uri]
-                  :send (let [notify (:notify extra)]
-                          (fn [method params] (notify (rpc/notification method (not-empty params)))))})
-          (swap! (:listeners srv) dissoc [(:session-id session) uri]))
-        [session (constantly {})])
+        (and (:version session) (#{"resources/subscribe" "resources/unsubscribe"} method))
+        (let [uri (get params "uri")]
+          (when-not (:subscribe srv)
+            (throw (error :method-not-found (str "Method not found: " method))))
+          (when-not (and (string? uri) (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" uri))
+            (throw (error :invalid-params (str method " requires an absolute uri"))))
+          (if (= "resources/subscribe" method)
+            (swap! (:listeners srv) assoc [(:session-id session) uri]
+                   {:kinds #{}
+                    :uris [uri]
+                    :send (let [notify (:notify extra)]
+                            (fn [method params] (notify (rpc/notification method (not-empty params)))))})
+            (swap! (:listeners srv) dissoc [(:session-id session) uri]))
+          [session (constantly {})])
 
-      (and (:version session) (= "logging/setLevel" method))
-      (let [level (get params "level")]
-        (when-not (:logging srv)
-          (throw (error :method-not-found (str "Method not found: " method))))
-        (when-not (protocol/log-level-rank level)
-          (throw (error :invalid-params (str "level must be one of " (str/join ", " protocol/log-levels)))))
-        [(assoc session :log-level level) (constantly {})])
+        (and (:version session) (= "logging/setLevel" method))
+        (let [level (get params "level")]
+          (when-not (:logging srv)
+            (throw (error :method-not-found (str "Method not found: " method))))
+          (when-not (protocol/log-level-rank level)
+            (throw (error :invalid-params (str "level must be one of " (str/join ", " protocol/log-levels)))))
+          [(assoc session :log-level level) (constantly {})])
 
-      (:version session)
-      (let [_ (when (or (contains? params "inputResponses") (contains? params "requestState"))
-                (throw (error :invalid-params "Multi round-trip inputs are not supported on this revision")))
-            context (merge session extra {:meta meta :request-id id})
-            f (method-fn srv method true)]
-        [session (fn [] (f srv params context))])
+        (:version session)
+        (let [_ (when (or (contains? params "inputResponses") (contains? params "requestState"))
+                  (throw (error :invalid-params "Multi round-trip inputs are not supported on this revision")))
+              context (merge session extra {:meta meta :request-id id})
+              f (method-fn srv method true)]
+          [session (fn [] (f srv params context))])
 
-      :else
-      (throw (error :invalid-params (str "Missing required " version-key " metadata"))))))
+        :else
+        (throw (error :invalid-params (str "Missing required " version-key " metadata")))))))
 
 (defn- cancel-target
   "The request id a notifications/cancelled message names, or nil."
@@ -1022,3 +1042,89 @@
   [srv]
   (doseq [{:keys [stop]} (vals @(:listeners srv)) :when stop]
     (deliver stop :ended)))
+
+;; Changing a running server's definitions
+
+(defn- change!
+  "Apply f to the catalog, bump kind's version and tell listening clients."
+  [srv kind f]
+  (swap! (:catalog srv) (fn [c] (-> (f c) (update-in [:catalog-version kind] inc))))
+  (when (:list-changed srv)
+    (list-changed! srv kind))
+  srv)
+
+(defn- put-ordered [c m-key order-key k v]
+  (cond-> (assoc-in c [m-key k] v)
+    (not (contains? (get c m-key) k)) (update order-key conj k)))
+
+(defn- drop-ordered [c m-key order-key k]
+  (-> c
+      (update m-key dissoc k)
+      (update order-key (fn [ks] (filterv #(not= k %) ks)))))
+
+(defn add-tool!
+  "Add tool (a map as `server` takes) to a running server, replacing a tool
+  of the same name in place. Clients listening for tool list changes are
+  told when the server has :list-changed. Returns srv."
+  [srv tool]
+  (change! srv "tools" #(put-ordered % :tools :tool-order (:name tool) (tool-def tool))))
+
+(defn remove-tool!
+  "Remove the tool named name from a running server. Returns srv."
+  [srv name]
+  (change! srv "tools" #(drop-ordered % :tools :tool-order name)))
+
+(defn add-resource!
+  "Add a resource to a running server, replacing one with the same URI.
+  Returns srv."
+  [srv resource]
+  (change! srv "resources" #(put-ordered % :resources :resource-order (:uri resource) (resource-def resource))))
+
+(defn remove-resource!
+  "Remove the resource at uri from a running server. Returns srv."
+  [srv uri]
+  (change! srv "resources" #(drop-ordered % :resources :resource-order uri)))
+
+(defn add-resource-template!
+  "Add a resource template to a running server, replacing one with the same
+  URI template. Returns srv."
+  [srv template]
+  (let [t (template-def template)]
+    (change! srv "resources"
+             (fn [c] (update c :templates
+                             (fn [ts]
+                               (if (some #(= (:uri-template t) (:uri-template %)) ts)
+                                 (mapv #(if (= (:uri-template t) (:uri-template %)) t %) ts)
+                                 (conj ts t))))))))
+
+(defn remove-resource-template!
+  "Remove the resource template with uri-template. Returns srv."
+  [srv uri-template]
+  (change! srv "resources"
+           (fn [c] (update c :templates (fn [ts] (filterv #(not= uri-template (:uri-template %)) ts))))))
+
+(defn add-prompt!
+  "Add a prompt to a running server, replacing one of the same name.
+  Returns srv."
+  [srv prompt]
+  (change! srv "prompts" #(put-ordered % :prompts :prompt-order (:name prompt) (prompt-def prompt))))
+
+(defn remove-prompt!
+  "Remove the prompt named name from a running server. Returns srv."
+  [srv name]
+  (change! srv "prompts" #(drop-ordered % :prompts :prompt-order name)))
+
+(defn tool
+  "The current definition of the tool named name, or nil."
+  [srv name]
+  (get-in (snapshot srv) [:tools name]))
+
+(defn resource
+  "The current definition of the resource at uri, or nil."
+  [srv uri]
+  (get-in (snapshot srv) [:resources uri]))
+
+(defn prompt
+  "The current definition of the prompt named name, or nil."
+  [srv name]
+  (get-in (snapshot srv) [:prompts name]))

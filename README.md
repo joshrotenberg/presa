@@ -100,6 +100,20 @@ first and falls back to `initialize` when the server does not answer as a
 request on the server), `:on-progress` and `:log-level`; `connect` takes
 `:on-log`.
 
+### Changing a running server
+
+A server's definitions can change while it serves. Each request reads one
+consistent snapshot; clients listening for list changes are told when the
+server has `:list-changed`, and pagination cursors from before a change
+expire.
+
+```clojure
+(server/add-tool! srv {:name "late" :handler (fn [_ _] "added while serving")})
+(server/remove-tool! srv "late")
+;; also add-resource!, remove-resource!, add-resource-template!,
+;; remove-resource-template!, add-prompt!, remove-prompt!
+```
+
 ## Over HTTP
 
 ```clojure
