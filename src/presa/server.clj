@@ -230,6 +230,13 @@
         :tool/error        :tool :request-id :exception, for a handler that
                            threw (the client gets an isError result)
       Exceptions the function throws are ignored.
+  - :required-scopes  {[kind key] [scope ..]}, the scopes a component needs:
+      kind is :tool, :prompt (keyed by name), :resource (by URI) or
+      :resource-template (by URI template); the caller's scopes come from
+      presa.auth over HTTP. A component the caller may not use is left out
+      of lists, and a call to it is -32003 with data
+      {\"error\" \"insufficient_scope\" \"scope\" ...}
+  - :default-scopes  the scopes of a component without an entry (default [])
   - :logging  true to advertise the logging capability, so `log!` sends
       messages to clients that ask for them
   - :log-level  the level an initialize-era session logs at until the client
@@ -242,7 +249,7 @@
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
            versions page-size cache logging log-level validate? state-secret state-ttl-ms
-           list-changed subscribe max-subscriptions on-event]
+           list-changed subscribe max-subscriptions on-event required-scopes default-scopes]
     :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000
          max-subscriptions 256}}]
   (when-not (and (string? name) (string? version))
@@ -282,6 +289,8 @@
      :subscribe (boolean subscribe)
      :max-subscriptions max-subscriptions
      :on-event on-event
+     :required-scopes (or required-scopes {})
+     :default-scopes (vec default-scopes)
      ;; open subscriptions/listen streams, by a key of their own
      :listeners (atom {})
      :validate? (boolean validate?)
@@ -343,7 +352,8 @@
     (seq requests) (assoc "inputRequests" requests)
     (some? state) (assoc "requestState"
                          (request-state/sign (:state-secret srv) method params state
-                                             (:state-ttl-ms srv) (now-ms)))))
+                                             (:state-ttl-ms srv) (now-ms)
+                                             (get-in context [:auth :subject])))))
 
 (defn- shape
   "A result as the revision of context sends it."
@@ -510,18 +520,36 @@
       (and (or (nil? (:input-schema tool)) (object-schema? (:input-schema tool)))
            (or (nil? (:output-schema tool)) (object-schema? (:output-schema tool))))))
 
+(defn- required-scopes [srv kind k]
+  (get (:required-scopes srv) [kind k] (:default-scopes srv)))
+
+(defn- permitted?
+  "Whether the caller's granted scopes (from presa.auth) cover what the
+  component needs. Without a scope policy every component needs nothing."
+  [srv context kind k]
+  (let [granted (set (get-in context [:auth :scopes]))]
+    (every? granted (required-scopes srv kind k))))
+
+(defn- check-permitted! [srv context kind k label]
+  (when-not (permitted? srv context kind k)
+    (throw (error :insufficient-scope (str "Insufficient scope for " label)
+                  {"error" "insufficient_scope"
+                   "scope" (str/join " " (required-scopes srv kind k))}))))
+
 (defn- tools-list [srv params context]
   (paged srv "tools/list" params "tools"
          (->> (:tool-order srv)
               (map (:tools srv))
               (filter #(era-tool? context %))
+              (filter #(permitted? srv context :tool (:name %)))
               (map wire-tool))))
 
 (defn- tools-call [srv params context]
   (let [tool-name (required-name params "name" "tools/call")
         arguments (arguments-map params "arguments" "tools/call")
         tool (or (let [t (get-in srv [:tools tool-name])] (when (and t (era-tool? context t)) t))
-                 (throw (error :invalid-params (str "Unknown tool: " tool-name))))]
+                 (throw (error :invalid-params (str "Unknown tool: " tool-name))))
+        _ (check-permitted! srv context :tool tool-name (str "tool " tool-name))]
     (if-let [invalid (and (:validate? srv) (:input-schema tool)
                           (schema/validate arguments (:input-schema tool)))]
       (tool-error (str "Invalid arguments " (schema/describe invalid)))
@@ -542,13 +570,17 @@
               (throw (error :internal-error (str "Tool output failed schema validation " (schema/describe invalid)))))))
         result))))
 
-(defn- resources-list [srv params _context]
+(defn- resources-list [srv params context]
   (paged srv "resources/list" params "resources"
-         (map (comp wire-resource (:resources srv)) (:resource-order srv))))
+         (->> (:resource-order srv)
+              (filter #(permitted? srv context :resource %))
+              (map (comp wire-resource (:resources srv))))))
 
-(defn- templates-list [srv params _context]
+(defn- templates-list [srv params context]
   (paged srv "resources/templates/list" params "resourceTemplates"
-         (map wire-template (:templates srv))))
+         (->> (:templates srv)
+              (filter #(permitted? srv context :resource-template (:uri-template %)))
+              (map wire-template))))
 
 (defn- contents
   "A resource handler's return value as resources/read contents."
@@ -567,19 +599,25 @@
     (when-not (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" uri)
       (throw (error :invalid-params "resources/read uri must be an absolute URI")))
     (if-let [resource (get-in srv [:resources uri])]
-      (let [v (run-handler context (:handler resource))]
+      (let [_ (check-permitted! srv context :resource uri (str "resource " uri))
+            v (run-handler context (:handler resource))]
         (if (input-required? v) v {"contents" (contents uri (:mime-type resource) v)}))
       (if-let [[template variables] (some (fn [t] (when-let [vs ((::match t) uri)] [t vs]))
                                           (:templates srv))]
-        (let [v (run-handler (assoc context :uri uri) #((:handler template) variables %))]
+        (let [_ (check-permitted! srv context :resource-template (:uri-template template)
+                                  (str "resource " uri))
+              v (run-handler (assoc context :uri uri) #((:handler template) variables %))]
           (cond
             (nil? v) (throw (not-found uri))
             (input-required? v) v
             :else {"contents" (contents uri (:mime-type template) v)}))
         (throw (not-found uri))))))
 
-(defn- prompts-list [srv params _context]
-  (paged srv "prompts/list" params "prompts" (map (comp wire-prompt (:prompts srv)) (:prompt-order srv))))
+(defn- prompts-list [srv params context]
+  (paged srv "prompts/list" params "prompts"
+         (->> (:prompt-order srv)
+              (filter #(permitted? srv context :prompt %))
+              (map (comp wire-prompt (:prompts srv))))))
 
 (defn- message [m]
   (cond
@@ -591,7 +629,8 @@
   (let [prompt-name (required-name params "name" "prompts/get")
         arguments (arguments-map params "arguments" "prompts/get")
         prompt (or (get-in srv [:prompts prompt-name])
-                   (throw (error :invalid-params (str "Unknown prompt: " prompt-name))))]
+                   (throw (error :invalid-params (str "Unknown prompt: " prompt-name))))
+        _ (check-permitted! srv context :prompt prompt-name (str "prompt " prompt-name))]
     (when-not (every? string? (vals arguments))
       (throw (error :invalid-params "prompts/get arguments must map strings to strings")))
     (when-let [missing (seq (for [{arg :name required :required} (:arguments prompt)
@@ -775,7 +814,7 @@
 
 (defn- input-admission
   "The :input-responses and :state of a 2026-07-28 retry, checked."
-  [srv method params]
+  [srv method params principal]
   (let [responses (get params "inputResponses")
         token (get params "requestState")]
     (when (contains? params "inputResponses")
@@ -790,7 +829,7 @@
       (throw (error :invalid-params (str method " does not take inputResponses or requestState"))))
     {:input-responses (or responses {})
      :state (when (string? token)
-              (try (request-state/verify (:state-secret srv) method params token (now-ms))
+              (try (request-state/verify (:state-secret srv) method params token (now-ms) principal)
                    (catch clojure.lang.ExceptionInfo _
                      (throw (error :invalid-params "Invalid or expired request state")))))}))
 
@@ -849,7 +888,7 @@
         (contains? meta version-key)
         (let [context (merge (stateless-context srv meta) extra {:request-id id})
               f (method-fn srv method false)
-              context (merge context (input-admission srv method params))]
+              context (merge context (input-admission srv method params (get-in context [:auth :subject])))]
           [session (fn [] (shape srv context method params (f srv params context)))])
 
         (= "initialize" method)
@@ -932,6 +971,8 @@
              while the request runs; without it, notifications are dropped
   - :request (fn [method params timeout-ms]) sends the client a request and
              returns its response map; see `client-request!`
+  - :auth     the verified identity of the caller (presa.auth), which
+             handlers see as (:auth context)
   - :session-notify  (fn [notification]) for what an initialize-era
              session hears outside any request (list changes, resource
              updates); defaults to :notify, which on stdio is the same
@@ -942,7 +983,7 @@
   :cancelled?, and for a resource template, :uri; see `notify!`,
   `progress!` and `log!`."
   ([srv session message] (prepare srv session message {}))
-  ([srv session message {:keys [notify session-notify] send-request :request}]
+  ([srv session message {:keys [notify session-notify auth] send-request :request}]
    (case (rpc/kind message)
      :request
      (let [id (get message "id")
@@ -950,6 +991,7 @@
            stopped (promise)
            extra {:notify (or notify (fn [_]))
                   :session-notify session-notify
+                  :auth auth
                   :request send-request
                   :server srv
                   :stopped stopped

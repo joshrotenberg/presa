@@ -53,6 +53,7 @@ gives the sha.
 | `presa.request-state` | signed `requestState` tokens for multi round-trip requests |
 | `presa.schema` | JSON Schema subset validation for tool arguments and output |
 | `presa.transport.http` | Streamable HTTP: a server over http-kit, a client over `java.net.http` |
+| `presa.auth`, `presa.auth.jwt` | OAuth 2.1 resource server: metadata, bearer challenges, JWT verification (RS256, ES256, HS256, JWKS) |
 
 [docs/roadmap.md](docs/roadmap.md) lists what is done and what is next.
 
@@ -144,6 +145,32 @@ progress or logs, and only loopback origins unless `:allowed-origins` says
 otherwise. Initialize-era clients get an `Mcp-Session-Id`.
 `http/handler` returns the ring handler for embedding in another http-kit
 server.
+
+### Requiring OAuth tokens
+
+An HTTP server can act as an OAuth 2.1 resource server: it publishes its
+protected resource metadata, requires a bearer token on every request, and
+answers a missing or bad token with a `WWW-Authenticate` challenge naming
+that metadata.
+
+```clojure
+(require '[presa.auth :as auth] '[presa.auth.jwt :as jwt])
+
+(def resource "https://mcp.example.com/mcp")
+
+(http/serve! srv {:auth (auth/resource-server
+                         {:resource resource
+                          :verify (jwt/verifier {:audience resource
+                                                 :issuer "https://auth.example.com"
+                                                 :jwks-url "https://auth.example.com/.well-known/jwks.json"})
+                          :authorization-servers ["https://auth.example.com"]
+                          :required-scopes ["mcp:read"]})})
+```
+
+Handlers see the caller as `(:auth context)` (`:subject`, `:client-id`,
+`:scopes`, `:claims`; never the raw token). `server` takes
+`:required-scopes` per tool, prompt, resource or template: a caller without
+them does not see the component, and a call to it is -32003.
 
 ## Asking the client for input
 
