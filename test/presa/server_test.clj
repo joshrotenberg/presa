@@ -176,3 +176,16 @@
     (is (false? @ran))
     (is (= "done" (get-in (respond) ["result" "content" 0 "text"])))
     (is (true? @ran))))
+
+(deftest malformed-notifications-are-ignored
+  (let [cancel (fn [params] (:cancel (server/prepare stateless {} (rpc/notification "notifications/cancelled" params))))]
+    (is (= 7 (cancel {"requestId" 7})))
+    (is (= "a" (cancel {"requestId" "a" "reason" "user" "_meta" {"x/y" 1}})))
+    (is (nil? (cancel {"requestId" 7 "reason" 3})))
+    (is (nil? (cancel {"requestId" 1.5})))
+    (is (nil? (cancel {"requestId" (apply str (repeat 300 "x"))})))
+    (is (nil? (cancel {"requestId" 7 "_meta" "x"})))
+    (is (nil? (cancel {"requestId" 7 "_meta" {"bad key!" 1}})))
+    (is (nil? (:cancel (server/prepare stateless {} {"jsonrpc" "2.0" "method" "notifications/cancelled" "params" [7]}))))
+    (testing "and get no answer either way"
+      (is (nil? ((:respond (server/prepare stateless {} (rpc/notification "notifications/cancelled" {"requestId" 7 "_meta" "x"})))))))))

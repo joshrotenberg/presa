@@ -825,12 +825,24 @@
       :else
       (throw (error :invalid-params (str "Missing required " version-key " metadata"))))))
 
+(defn- valid-notification?
+  "Whether a notification's params and _meta have the right shape. A
+  notification is never answered, so one that fails is ignored."
+  [{:strs [params] :as message}]
+  (and (or (not (contains? message "params")) (map? params))
+       (let [meta (get params "_meta" {})]
+         (and (map? meta)
+              (every? #(and (string? %) (re-matches meta-key %)) (keys meta))))))
+
 (defn- cancel-target
-  "The request id a notifications/cancelled message names, or nil."
+  "The request id a well-formed notifications/cancelled names, or nil."
   [message]
-  (when (= "notifications/cancelled" (get message "method"))
-    (let [id (get-in message ["params" "requestId"])]
-      (when (or (string? id) (integer? id)) id))))
+  (when (and (= "notifications/cancelled" (get message "method"))
+             (valid-notification? message))
+    (let [{:strs [requestId reason] :as params} (get message "params")]
+      (when (and (bounded-id? requestId)
+                 (or (not (contains? params "reason")) (string? reason)))
+        requestId))))
 
 (defn prepare
   "Read one message against session, the connection's state ({} for a new
