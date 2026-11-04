@@ -607,13 +607,21 @@
           ack (cond-> (into {} (for [[flag kind] flags :when (kinds kind)] [flag true]))
                 uris (assoc "resourceSubscriptions" uris))
           tag {sub-key id}
-          listener-key (Object.)]
-      (notify! context "notifications/subscriptions/acknowledged" {"notifications" ack "_meta" tag})
+          listener-key (Object.)
+          acked (promise)]
+      ;; Register before acknowledging, so a stream acknowledged is a stream
+      ;; end-subscriptions! can end; events wait for the acknowledgement,
+      ;; which stays the first message on the stream.
       (swap! (:listeners srv) assoc listener-key
              {:kinds kinds
               :uris uris
-              :send (fn [method params] (notify! context method (assoc params "_meta" tag)))
+              :send (fn [method params]
+                      (deref acked 5000 nil)
+                      (notify! context method (assoc params "_meta" tag)))
               :stop (:stopped context)})
+      (try
+        (notify! context "notifications/subscriptions/acknowledged" {"notifications" ack "_meta" tag})
+        (finally (deliver acked true)))
       (try
         @(:stopped context)
         {"_meta" tag}
