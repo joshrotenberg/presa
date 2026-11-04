@@ -33,7 +33,14 @@
   (default 1000 tasks not yet terminal)."
   [{:keys [ttl-ms poll-interval-ms max-tasks]
     :or {ttl-ms 3600000 poll-interval-ms 250 max-tasks 1000}}]
-  {:tasks (atom {}) :ttl-ms ttl-ms :poll-interval-ms poll-interval-ms :max-tasks max-tasks})
+  {:tasks (atom {}) :ttl-ms ttl-ms :poll-interval-ms poll-interval-ms :max-tasks max-tasks
+   ;; (fn [task]) called after each change of a task, for status notifications
+   :on-change (atom nil)})
+
+(defn- changed! [st before after]
+  (when-let [f (and after (not= (dissoc before :updated-at :work) (dissoc after :updated-at :work))
+                    @(:on-change st))]
+    (try (f after) (catch Exception _ nil))))
 
 (defn- new-id []
   (let [b (byte-array 24)]
@@ -76,20 +83,9 @@
     (when (and (= scope (:scope t)) (not (expired? t (now-ms))))
       t)))
 
-(defn update!
-  "Apply f to the task with id unless it is terminal; returns the task after."
-  [st id f]
-  (get (swap! (:tasks st)
-              (fn [m]
-                (if-let [t (get m id)]
-                  (if (terminal (:status t))
-                    m
-                    (assoc m id (assoc (f t) :updated-at (now-ms))))
-                  m)))
-       id))
-
 (defn update-vals!
-  "Like update!, but returns [before after]: the task before f and after."
+  "Apply f to the task with id unless it is terminal; returns [before
+  after], the task before f and after."
   [st id f]
   (let [[old new] (swap-vals! (:tasks st)
                               (fn [m]
@@ -97,8 +93,16 @@
                                   (if (terminal (:status t))
                                     m
                                     (assoc m id (assoc (f t) :updated-at (now-ms))))
-                                  m)))]
-    [(get old id) (get new id)]))
+                                  m)))
+        before (get old id)
+        after (get new id)]
+    (changed! st before after)
+    [before after]))
+
+(defn update!
+  "Apply f to the task with id unless it is terminal; returns the task after."
+  [st id f]
+  (second (update-vals! st id f)))
 
 (defn set-work!
   "Remember the future running the task with id."
@@ -129,6 +133,11 @@
     (= "input_required" (:status t)) (assoc "inputRequests" (:input-requests t))
     (= "completed" (:status t)) (assoc "result" (:result t))
     (= "failed" (:status t)) (assoc "error" (:error t))))
+
+(defn notification
+  "The params of notifications/tasks for a task: the DetailedTask fields."
+  [t]
+  (detailed t))
 
 (defn check-task-id
   "A taskId param, or nil with the -32602 message to send."

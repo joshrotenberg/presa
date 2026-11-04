@@ -80,3 +80,23 @@ its input requests the ordinary way:
 
 (client/close plain)
 ```
+
+## Following a task without polling
+
+A client can listen for a task's status changes: `subscriptions/listen`
+with `"taskIds"` (at most 100, each visible to the caller; others are
+dropped from the acknowledgement) delivers `notifications/tasks` with the
+task's DetailedTask fields. It needs the Tasks declaration. `await-task`
+with `:listen? true` uses it, polling rarely as a fallback.
+
+```clojure
+(def watcher (client/connect (client/in-process srv)
+                             {:tasks true
+                              :handlers {"elicitation/create" (fn [_] {"action" "accept" "content" {"ok" true}})}}))
+
+(get-in (client/await-task watcher (client/call-tool watcher "build" {"target" "web"}) {:listen? true})
+        ["result" "content" 0 "text"])
+;; => "built web"
+
+(client/close watcher)
+```

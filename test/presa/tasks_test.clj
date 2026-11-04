@@ -176,3 +176,33 @@
               (client/cancel-task c (get created "taskId"))
               (is (= "cancelled" (get (client/task c (get created "taskId")) "status"))))
             (finally (client/close c) (stop!))))))))
+
+(deftest status-notifications
+  (let [srv (make-server)
+        heard (atom [])
+        c (client/connect (client/in-process srv)
+                          {:tasks true :handlers {"elicitation/create" (fn [{:strs [message]}] {"action" "accept" "content" {"v" message}})}})]
+    (try
+      (let [created (client/call-tool c "two")
+            id (get created "taskId")
+            sub (client/listen c {"taskIds" [id "unknown-task"]} #(swap! heard conj %))]
+        (testing "the acknowledgement keeps only tasks the caller can see"
+          (is (= {"taskIds" [id]} (get (deref (:acknowledged sub) 2000 nil) "notifications"))))
+        (client/update-task c id {"a" {"action" "accept" "content" {"v" 1}}})
+        (client/update-task c id {"b" {"action" "accept" "content" {"v" 2}}})
+        (is (loop [n 0] (cond (some #(= "completed" (get-in % ["params" "status"])) @heard) true
+                              (> n 200) false :else (do (Thread/sleep 10) (recur (inc n))))))
+        (let [n (first (filter #(= "completed" (get-in % ["params" "status"])) @heard))]
+          (is (= "notifications/tasks" (get n "method")))
+          (is (= id (get-in n ["params" "taskId"])))
+          (is (= "got 1 2" (get-in n ["params" "result" "content" 0 "text"])))
+          (is (some? (get-in n ["params" "_meta" "io.modelcontextprotocol/subscriptionId"]))))
+        ((:stop! sub)))
+      (testing "await-task can follow notifications instead of polling"
+        (let [done (client/await-task c (client/call-tool c "two") {:listen? true :timeout-ms 5000})]
+          (is (= "got a? b?" (get-in done ["result" "content" 0 "text"])))))
+      (finally (client/close c))))
+  (testing "taskIds needs the Tasks declaration"
+    (let [srv (make-server)]
+      (is (= -32021 (get-in (call srv "subscriptions/listen" {"notifications" {"taskIds" ["x"]}} undeclared) ["error" "code"])))
+      (is (= -32602 (get-in (call srv "subscriptions/listen" {"notifications" {"taskIds" "x"}} declared) ["error" "code"]))))))
