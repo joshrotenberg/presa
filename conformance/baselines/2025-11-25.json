@@ -1,0 +1,156 @@
+{
+  "revision" : "2025-11-25",
+  "runner" : "0.2.0-alpha.12",
+  "checkInventory" : {
+    "completion-complete" : {
+      "completion-complete" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "dns-rebinding-protection" : {
+      "localhost-host-rebinding-rejected" : [ "SUCCESS" ],
+      "localhost-host-valid-accepted" : [ "SUCCESS" ]
+    },
+    "elicitation-sep1034-defaults" : {
+      "elicitation-sep1034-boolean-default" : [ "SUCCESS" ],
+      "elicitation-sep1034-enum-default" : [ "SUCCESS" ],
+      "elicitation-sep1034-integer-default" : [ "SUCCESS" ],
+      "elicitation-sep1034-number-default" : [ "SUCCESS" ],
+      "elicitation-sep1034-string-default" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "elicitation-sep1330-enums" : {
+      "elicitation-sep1330-legacy-enumnames" : [ "SUCCESS" ],
+      "elicitation-sep1330-titled-multi" : [ "SUCCESS" ],
+      "elicitation-sep1330-titled-single" : [ "SUCCESS" ],
+      "elicitation-sep1330-untitled-multi" : [ "SUCCESS" ],
+      "elicitation-sep1330-untitled-single" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "json-schema-2020-12" : {
+      "json-schema-2020-12-$defs" : [ "SUCCESS" ],
+      "json-schema-2020-12-$schema" : [ "SUCCESS" ],
+      "json-schema-2020-12-additionalProperties" : [ "SUCCESS" ],
+      "json-schema-2020-12-tool-found" : [ "SUCCESS" ],
+      "sep-2106-anchor-keyword-preserved" : [ "SUCCESS" ],
+      "sep-2106-composition-keywords-preserved" : [ "SUCCESS" ],
+      "sep-2106-conditional-keywords-preserved" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "logging-set-level" : {
+      "logging-set-level" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "ping" : {
+      "ping" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "prompts-get-embedded-resource" : {
+      "prompts-get-embedded-resource" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "prompts-get-simple" : {
+      "prompts-get-simple" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "prompts-get-with-args" : {
+      "prompts-get-with-args" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "prompts-get-with-image" : {
+      "prompts-get-with-image" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "prompts-list" : {
+      "prompts-list" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "resources-list" : {
+      "resources-list" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "resources-read-binary" : {
+      "resources-read-binary" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "resources-read-text" : {
+      "resources-read-text" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "resources-subscribe" : {
+      "resources-subscribe" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "resources-templates-read" : {
+      "resources-templates-read" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "resources-unsubscribe" : {
+      "resources-unsubscribe" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "server-initialize" : {
+      "server-initialize" : [ "SUCCESS" ],
+      "server-session-id-visible-ascii" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "server-session-lifecycle" : {
+      "server-session-delete-accepted" : [ "SUCCESS" ],
+      "server-session-initialized-accepted" : [ "SUCCESS" ],
+      "server-session-terminated-returns-404" : [ "SUCCESS" ]
+    },
+    "server-sse-multiple-streams" : {
+      "server-accepts-multiple-post-streams" : [ "SUCCESS" ],
+      "server-sse-streams-functional" : [ "INFO" ]
+    },
+    "server-sse-polling" : {
+      "incoming-response" : [ "INFO" ],
+      "outgoing-request" : [ "INFO" ],
+      "server-sse-content-type" : [ "INFO" ]
+    },
+    "tools-call-audio" : {
+      "tools-call-audio" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-elicitation" : {
+      "tools-call-elicitation" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-embedded-resource" : {
+      "tools-call-embedded-resource" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-error" : {
+      "tools-call-error" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-image" : {
+      "tools-call-image" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-mixed-content" : {
+      "tools-call-mixed-content" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-sampling" : {
+      "tools-call-sampling" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-simple-text" : {
+      "tools-call-simple-text" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-with-logging" : {
+      "tools-call-with-logging" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-call-with-progress" : {
+      "tools-call-with-progress" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "tools-list" : {
+      "tools-list" : [ "SUCCESS" ],
+      "tools-name-format" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    }
+  }
+}

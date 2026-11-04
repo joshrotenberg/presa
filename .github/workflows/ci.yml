@@ -4,21 +4,74 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Pull requests share a group per ref, so a newer push cancels the older
+  # run; pushes to main get a group per commit, so no main run is dropped.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  babashka:
+    name: bb test (Babashka ${{ matrix.bb }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # the min-bb-version in bb.edn, and the latest release
+        bb: ["1.13.225", "latest"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
+        with:
+          bb: ${{ matrix.bb }}
+      - run: bb test
+
+  jvm:
+    name: bb jvm-test (JDK ${{ matrix.java }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["21", "25"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: "21"
-      - uses: DeLaGuardo/setup-clojure@12.5
+          java-version: ${{ matrix.java }}
+      - uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
         with:
           cli: latest
           bb: latest
-      - name: test
-        run: bb test
-      - name: jvm-test
-        run: bb jvm-test
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+          key: clojure-${{ runner.os }}-${{ hashFiles('deps.edn') }}
+          restore-keys: clojure-${{ runner.os }}-
+      # the stdio client tests start servers under bb, so bb is installed too
+      - run: bb jvm-test
+
+  lint:
+    name: Conventions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
+        with:
+          bb: latest
+      # a pull request is checked against its base branch, a push to main
+      # against the commit before it
+      - run: bb lint ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before || 'origin/main' }}

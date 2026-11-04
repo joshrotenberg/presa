@@ -1,7 +1,7 @@
 ;; Run the official MCP conformance runner's server leg against presa's
 ;; fixture and summarize the result.
 ;;
-;;   bb conformance/run.clj [revision] [scenario]
+;;   bb conformance/run.clj [revision] [scenario] [--update-baseline]
 ;;
 ;; revision is 2026-07-28 (the default), 2025-11-25 or 2025-06-18. The
 ;; first two run the runner's frozen requirement set for that revision; for
@@ -12,6 +12,11 @@
 ;; (@modelcontextprotocol/conformance@0.2.0-alpha.12); by default it is
 ;; taken from conformance/node_modules, then from a snodo checkout next to
 ;; this one. Results land in tmp/conformance/<timestamp>/.
+;;
+;; A full run (no scenario) is compared with conformance/baselines/<revision>.json,
+;; which records the status of every check of every scenario. Any difference
+;; fails the run, including a check that starts passing, so a baseline only
+;; changes in review: --update-baseline rewrites it from the run.
 (require '[babashka.fs :as fs]
          '[babashka.process :as p]
          '[cheshire.core :as json]
@@ -28,14 +33,20 @@
              (fs/path root "../snodo/conformance/node_modules/@modelcontextprotocol/conformance/dist/index.js")])
       (throw (ex-info "No conformance runner: set PRESA_CONFORMANCE_RUNNER or npm ci in conformance/" {}))))
 
-(let [pkg (json/parse-string (slurp (str (fs/path (fs/parent (fs/parent runner)) "package.json"))))]
-  (when-not (= pinned (get pkg "version"))
+(def runner-version
+  (get (json/parse-string (slurp (str (fs/path (fs/parent (fs/parent runner)) "package.json")))) "version"))
+
+;; PRESA_CONFORMANCE_UNPINNED=1 runs another runner build (the canary)
+(let [pkg {"version" runner-version}]
+  (when-not (or (= pinned (get pkg "version")) (System/getenv "PRESA_CONFORMANCE_UNPINNED"))
     (throw (ex-info (str "The runner is " (get pkg "version") ", not " pinned) {}))))
 
-(def revision (or (some #(re-matches #"\d{4}-\d{2}-\d{2}" %) *command-line-args*) "2026-07-28"))
-(def scenario (first (remove #(re-matches #"\d{4}-\d{2}-\d{2}" %) *command-line-args*)))
+(def flags (set (filter #(str/starts-with? % "--") *command-line-args*)))
+(def positional (remove #(str/starts-with? % "--") *command-line-args*))
+(def revision (or (some #(re-matches #"\d{4}-\d{2}-\d{2}" %) positional) "2026-07-28"))
+(def scenario (first (remove #(re-matches #"\d{4}-\d{2}-\d{2}" %) positional)))
 (def frozen? (contains? #{"2026-07-28" "2025-11-25"} revision))
-(def out-dir (str (fs/path root "tmp/conformance"
+(def out-dir (str (fs/path root "tmp/conformance" revision
                            (str/replace (str (java.time.Instant/now)) #"[:.]" "-"))))
 (fs/create-dirs out-dir)
 
@@ -54,7 +65,7 @@
       (throw (ex-info (str "The fixture did not start: " line) {})))
     (get ready "url")))
 
-(println "fixture at" url "for" revision)
+(println "fixture at" url "for" revision "with runner" runner-version)
 
 (let [args (cond-> ["node" runner "server" "--url" url "--output-dir" out-dir]
              scenario (into ["--scenario" scenario "--spec-version" revision])
@@ -91,3 +102,54 @@
   (println)
   (println (format "%d scenarios, %d with failures; %s" (count scenarios) failed (pr-str (status-counts checks))))
   (println "results in" out-dir))
+
+;; Baseline
+
+(def inventory
+  "Every check's statuses, by scenario and check id; statuses sorted, since a
+  check id can repeat within a scenario."
+  (into (sorted-map)
+        (map (fn [[s cs]]
+               [s (into (sorted-map)
+                        (map (fn [[id xs]] [id (vec (sort (map #(get % "status") xs)))]))
+                        (group-by #(get % "id") cs))]))
+        by-scenario))
+
+(def baseline-file (str (fs/path root "conformance/baselines" (str revision ".json"))))
+
+(defn- differences [expected actual]
+  (for [s (sort (set (concat (keys expected) (keys actual))))
+        id (sort (set (concat (keys (get expected s)) (keys (get actual s)))))
+        :let [e (get-in expected [s id]) a (get-in actual [s id])]
+        :when (not= e a)]
+    [s id e a]))
+
+(cond
+  scenario nil
+
+  (empty? inventory)
+  (do (println "The runner produced no results; see" (str (fs/path out-dir "runner.log")))
+      (System/exit 1))
+
+  (contains? flags "--update-baseline")
+  (do (fs/create-dirs (fs/parent baseline-file))
+      (spit baseline-file (str (json/generate-string {"revision" revision "runner" pinned "checkInventory" inventory}
+                                                     {:pretty true})
+                               "\n"))
+      (println "wrote" baseline-file))
+
+  (not (fs/exists? baseline-file))
+  (do (println "No baseline at" baseline-file "; run with --update-baseline to record one")
+      (System/exit 1))
+
+  :else
+  (let [expected (get (json/parse-string (slurp baseline-file)) "checkInventory")
+        diffs (differences expected inventory)]
+    (if (empty? diffs)
+      (println "matches" baseline-file)
+      (do (println)
+          (println (count diffs) "differences from" baseline-file ":")
+          (doseq [[s id e a] diffs]
+            (println (format "  %s / %s: expected %s, got %s" s id (pr-str e) (pr-str a))))
+          (println "If the change is intended, run with --update-baseline and review the diff.")
+          (System/exit 1)))))
