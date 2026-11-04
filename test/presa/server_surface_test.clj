@@ -240,3 +240,29 @@
                                                                    "clientInfo" {"name" "c" "version" "0"}}))]
           (is (= -32601 (get-in (second (run quiet session (rpc/request 2 "logging/setLevel" {"level" "debug"})))
                                 ["error" "code"]))))))))
+
+(deftest instrumentation
+  (let [events (atom [])
+        srv (server/server {:name "t" :version "1"
+                            :on-event #(swap! events conj (dissoc % :duration-ms :exception))
+                            :tools [{:name "ok" :handler (fn [_ _] "ok")}
+                                    {:name "boom" :handler (fn [_ _] (throw (ex-info "kaboom" {})))}]})
+        run (fn [m] (server/handle srv {} m))]
+    (run (rpc/request 1 "tools/call" {"name" "ok" "_meta" meta-2026}))
+    (run (rpc/request 2 "tools/call" {"name" "boom" "_meta" meta-2026}))
+    (run (rpc/request 3 "tools/call" {"name" "nope" "_meta" meta-2026}))
+    (run (rpc/request 4 "tools/list" {}))
+    (is (= [{:event :request/start :method "tools/call" :request-id 1 :version "2026-07-28"}
+            {:event :request/stop :method "tools/call" :request-id 1 :outcome :ok}
+            {:event :request/start :method "tools/call" :request-id 2 :version "2026-07-28"}
+            {:event :tool/error :tool "boom" :request-id 2}
+            {:event :request/stop :method "tools/call" :request-id 2 :outcome :ok}
+            {:event :request/start :method "tools/call" :request-id 3 :version "2026-07-28"}
+            {:event :request/stop :method "tools/call" :request-id 3 :outcome :error :error-code -32602}
+            {:event :request/rejected :method "tools/list" :request-id 4 :error-code -32602}]
+           @events))
+    (testing "a failing on-event function never fails the request"
+      (let [srv (server/server {:name "t" :version "1" :on-event (fn [_] (throw (ex-info "x" {})))
+                                :tools [{:name "ok" :handler (fn [_ _] "ok")}]})]
+        (is (= "ok" (get-in (second (server/handle srv {} (rpc/request 1 "tools/call" {"name" "ok" "_meta" meta-2026})))
+                            ["result" "content" 0 "text"])))))))
