@@ -41,7 +41,13 @@
     presa.example.hello-test
     presa.guides-test])
 
+(def jvm-namespaces
+  "Tests of namespaces that load only on the JVM (test-jvm/)."
+  '[presa.schema.networknt-test])
+
 (defn -main [& _]
-  (let [{:keys [fail error]} (apply test/run-tests namespaces)]
+  (let [jvm? (nil? (System/getProperty "babashka.version"))
+        _ (when jvm? (run! require jvm-namespaces))
+        {:keys [fail error]} (apply test/run-tests (cond-> namespaces jvm? (into jvm-namespaces)))]
     (shutdown-agents)
     (System/exit (if (zero? (+ fail error)) 0 1))))
