@@ -589,6 +589,15 @@
   of that request instead of the client."
   nil)
 
+(defn- auth-headers
+  "The authorization headers of a request with token: the provider's
+  :headers (DPoP adds a proof per request), else Authorization: Bearer."
+  [token-provider endpoint token method]
+  (when token
+    (if-let [f (:headers token-provider)]
+      (f {:token token :method method :url endpoint})
+      {"authorization" (str "Bearer " token)})))
+
 (defn url
   "A presa.client transport to the Streamable HTTP endpoint at endpoint.
   Options:
@@ -596,10 +605,14 @@
   - :headers         extra headers on every request
   - :token-provider  OAuth: {:token (fn [ctx]) :refresh (fn [refusal])}, such
                      as presa.auth.client/provider. Its token goes in
-                     Authorization: Bearer; a 401, or a 403 insufficient_scope,
-                     goes to :refresh (with :status, :challenge, :token) and the
-                     request is sent once more. A second refusal is -32000 with
-                     the status and challenge.
+                     Authorization: Bearer, or in the headers its optional
+                     :headers (fn [{:token :method :url}]) returns (DPoP); a
+                     401, or a 403 insufficient_scope, goes to :refresh (with
+                     :status, :challenge, :token) and the request is sent once
+                     more. A second refusal is -32000 with the status and
+                     challenge. A DPoP-Nonce response header goes to its
+                     optional :nonce! (fn [url nonce]), and a 401
+                     use_dpop_nonce is retried once with the same token.
   - :connect-timeout-ms  (default 10000)
   - :log             (fn [& parts]) for diagnostics"
   ([endpoint] (url endpoint {}))
@@ -638,8 +651,10 @@
                                         (.GET))]
                         (when-let [sid (:session-id @state)] (.header builder "mcp-session-id" sid))
                         (when-let [v (:version @state)] (.header builder "mcp-protocol-version" v))
-                        (when-let [t (and token-provider ((:token token-provider) {:url endpoint}))]
-                          (.header builder "authorization" (str "Bearer " t)))
+                        (doseq [[k v] (auth-headers token-provider endpoint
+                                                    (when token-provider ((:token token-provider) {:url endpoint}))
+                                                    "GET")]
+                          (.header builder (str k) (str v)))
                         (when last-event-id (.header builder "last-event-id" last-event-id))
                         (doseq [[k v] headers] (.header builder (str k) (str v)))
                         (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))
@@ -682,9 +697,25 @@
                        (let [builder (HttpRequest/newBuilder uri)]
                          (doseq [[k v] (merge (request-headers message state annotations) headers)]
                            (.header builder (str k) (str v)))
-                         (when token (.header builder "authorization" (str "Bearer " token)))
+                         (doseq [[k v] (auth-headers token-provider endpoint token "POST")]
+                           (.header builder (str k) (str v)))
                          (.POST builder (HttpRequest$BodyPublishers/ofString (write-json message)))
-                         (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))))
+                         (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))]
+                           (when-let [nonce (.orElse (.firstValue (.headers resp) "dpop-nonce") nil)]
+                             (when-let [f (:nonce! token-provider)] (f endpoint nonce)))
+                           resp)))
+           send-post* (fn [message token]
+                        ;; a 401 use_dpop_nonce with a new nonce: once more
+                        ;; with the same token and a proof carrying it
+                        (let [^HttpResponse resp (send-post message token)
+                              header (.orElse (.firstValue (.headers resp) "www-authenticate") nil)]
+                          (if (and token (:nonce! token-provider) (= 401 (.statusCode resp))
+                                   (.isPresent (.firstValue (.headers resp) "dpop-nonce"))
+                                   (= "use_dpop_nonce" (get-in (when header (auth-client/bearer-challenge header))
+                                                               [:params "error"])))
+                            (do (.close ^java.io.InputStream (.body resp))
+                                (send-post message token))
+                            resp)))
            challenge-of (fn [^HttpResponse resp]
                           (let [status (.statusCode resp)
                                 header (.orElse (.firstValue (.headers resp) "www-authenticate") nil)
@@ -700,7 +731,7 @@
            post (fn [message]
                   (let [id (get message "id")
                         token (when token-provider ((:token token-provider) {:url endpoint}))
-                        first-try (send-post message token)
+                        first-try (send-post* message token)
                         ;; a 401, or a 403 asking for more scope, goes to the
                         ;; token provider once, then the request is sent again
                         ^HttpResponse resp
@@ -714,7 +745,7 @@
                                                        (refused id refusal (or (ex-message e) "authorization failed"))
                                                        ::failed))]
                                   (when-not (= ::failed new-token)
-                                    (let [again (send-post message new-token)]
+                                    (let [again (send-post* message new-token)]
                                       (if-let [refusal (challenge-of again)]
                                         (do (.close ^java.io.InputStream (.body again)) (refused id refusal) nil)
                                         again))))))
@@ -813,9 +844,11 @@
                       (try
                         (.send client (-> (HttpRequest/newBuilder uri)
                                           (.header "mcp-session-id" sid)
-                                          (as-> b (if-let [t (and token-provider ((:token token-provider) {:url endpoint}))]
-                                                    (.header b "authorization" (str "Bearer " t))
-                                                    b))
+                                          (as-> b (reduce (fn [b [k v]] (.header ^java.net.http.HttpRequest$Builder b (str k) (str v)))
+                                                                  b
+                                                                  (auth-headers token-provider endpoint
+                                                                                (when token-provider ((:token token-provider) {:url endpoint}))
+                                                                                "DELETE")))
                                           (.DELETE)
                                           (.build))
                                (HttpResponse$BodyHandlers/discarding))

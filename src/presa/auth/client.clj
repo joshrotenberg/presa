@@ -14,6 +14,7 @@
   redirected to. `loopback-authorizer` opens a listener on 127.0.0.1 for
   real use; a test or harness can read the redirect's Location itself."
   (:require [clojure.data.json :as json]
+            [presa.auth.dpop :as dpop]
             [clojure.string :as str]
             [org.httpkit.server :as hk])
   (:import (java.net URI URLDecoder URLEncoder)
@@ -240,9 +241,19 @@
             (.update (.getBytes input "UTF-8")))]
     (str input "." (b64url (.sign s)))))
 
+(defn- dpop?
+  "Whether token requests to as carry DPoP proofs: the provider has a key
+  and the authorization server takes ES256 proofs."
+  [opts as]
+  (and (::dpop-key opts)
+       (some #{"ES256"} (get as "dpop_signing_alg_values_supported"))))
+
+(defn- origin-of [url] (let [u (URI. (str url))] (str (.getScheme u) "://" (.getRawAuthority u))))
+
 (defn- token-request!
-  "POST form to the token endpoint with the client's authentication; the
-  token response, checked."
+  "POST form to the token endpoint with the client's authentication, and a
+  DPoP proof when the authorization server takes them (retried once with
+  the nonce of a use_dpop_nonce answer); the token response, checked."
   [opts as identity form]
   (let [{:keys [client-id client-secret registered]} identity
         method (if (:private-key-pem opts)
@@ -258,13 +269,26 @@
                (= "private_key_jwt" method)
                (assoc "client_assertion_type" "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
                       "client_assertion" (client-assertion opts client-id (get as "issuer"))))
-        r (http "POST" (get as "token_endpoint")
-                {:headers (cond-> {"content-type" "application/x-www-form-urlencoded" "accept" "application/json"}
-                            basic (assoc "authorization" basic))
-                 :body (form-encode form)})
-        doc (json-body r)]
+        endpoint (get as "token_endpoint")
+        dpop (dpop? opts as)
+        nonces (::nonces opts)
+        send! (fn []
+                (http "POST" endpoint
+                      {:headers (cond-> {"content-type" "application/x-www-form-urlencoded" "accept" "application/json"}
+                                  basic (assoc "authorization" basic)
+                                  dpop (assoc "dpop" (dpop/proof (::dpop-key opts) "POST" endpoint
+                                                                 {:nonce (get @nonces (origin-of endpoint))})))
+                       :body (form-encode form)}))
+        r (let [r (send!)
+                nonce ((:header r) "dpop-nonce")]
+            (when (and dpop nonce) (swap! nonces assoc (origin-of endpoint) nonce))
+            (if (and dpop nonce (= 400 (:status r)) (= "use_dpop_nonce" (get (json-body r) "error")))
+              (send!)
+              r))
+        doc (json-body r)
+        token-type (str/lower-case (str (get doc "token_type")))]
     (when-not (and (= 200 (:status r)) (string? (get doc "access_token"))
-                   (= "bearer" (str/lower-case (str (get doc "token_type")))))
+                   (or (= "bearer" token-type) (and dpop (= "dpop" token-type))))
       (fail :token (str "The token request failed with " (:status r)) {:error (get doc "error")}))
     doc))
 
@@ -362,6 +386,7 @@
                :expires-at (when (number? (get doc "expires_in"))
                              (+ (System/currentTimeMillis) (* 1000 (long (get doc "expires_in")))))
                :issuer issuer
+               :dpop? (= "dpop" (str/lower-case (str (get doc "token_type"))))
                :client-id (:client-id identity)
                :resource-metadata (::url prm)}]
     (swap! state assoc :token token)
@@ -386,15 +411,37 @@
                    (with :client-secret or :private-key-pem, an EC P-256
                    PKCS#8 PEM for private_key_jwt)
   - :auth-method   force a token endpoint auth method
+  - :dpop          false to never use DPoP (RFC 9449). Otherwise the provider
+                   sends DPoP proofs (ES256, a key per provider) when the
+                   authorization server lists ES256 in
+                   dpop_signing_alg_values_supported, and presents a
+                   DPoP-bound token with Authorization: DPoP and a proof on
+                   each request.
 
   Flows run one at a time; a refusal that arrives while one runs gets its
-  result."
+  result.
+
+  Besides :token and :refresh, the provider has :headers, the authorization
+  headers of one request, and :nonce!, which takes a server's DPoP-Nonce;
+  presa.transport.http/url calls both."
   [opts]
   (when-not (:resource opts)
     (throw (ex-info "An OAuth provider needs :resource, the MCP server URL" {:kind :invalid-input})))
   (let [state (atom {})
-        lock (Object.)]
-    {:token (fn [_]
+        lock (Object.)
+        nonces (atom {})
+        ;; one ES256 key pair per provider
+        dpop-key (when-not (false? (:dpop opts)) (dpop/key-pair))
+        opts (cond-> (assoc opts ::nonces nonces)
+               dpop-key (assoc ::dpop-key dpop-key))]
+    {:headers (fn [{:keys [token method url]}]
+                (if (and token (get-in @state [:token :dpop?]) (= token (get-in @state [:token :access-token])))
+                  {"authorization" (str "DPoP " token)
+                   "dpop" (dpop/proof (::dpop-key opts) method url
+                                      {:access-token token :nonce (get @nonces (origin-of url))})}
+                  (when token {"authorization" (str "Bearer " token)})))
+     :nonce! (fn [url nonce] (when (string? nonce) (swap! nonces assoc (origin-of url) nonce)))
+     :token (fn [_]
               (let [{:keys [access-token expires-at]} (:token @state)]
                 (cond
                   (and access-token (or (nil? expires-at) (< (System/currentTimeMillis) (- expires-at 30000))))
