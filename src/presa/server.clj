@@ -287,7 +287,7 @@
         templates (mapv template-def resource-templates)
         [prompts prompt-order] (index "prompt" :name (map prompt-def prompts))]
     (index "resource template" :uri-template templates)
-    {:info (cond-> {"name" name "version" version}
+    (let [srv {:info (cond-> {"name" name "version" version}
              title (assoc "title" title))
      :instructions instructions
      ;; the definitions, which add-tool! and friends change while serving;
@@ -320,7 +320,15 @@
      :log-level log-level
      :cache {:ttl-ms (or (:ttl-ms cache) 0) :scope (or (:scope cache) "private")}
      ;; newest first, as presa.protocol/versions orders them
-     :versions (filterv (set versions) protocol/versions)}))
+     :versions (filterv (set versions) protocol/versions)}]
+      (when-let [st (:task-store srv)]
+            ;; a task's changes reach the streams listening for it
+            (reset! (:on-change st)
+                    (fn [task]
+                      (doseq [{:keys [task-ids scope send]} (vals @(:listeners srv))
+                              :when (and (contains? task-ids (:id task)) (= scope (:scope task)))]
+                        (try (send "notifications/tasks" (tasks/notification task)) (catch Exception _ nil))))))
+      srv)))
 
 (defn- snapshot
   "srv with the current definitions merged in, read once."
@@ -796,7 +804,7 @@
 
 (defn- ping [_ _ _] {})
 
-(declare notify!)
+(declare notify! require-tasks-declared!)
 
 (def ^:private flags
   {"toolsListChanged" "tools" "promptsListChanged" "prompts" "resourcesListChanged" "resources"})
@@ -819,14 +827,25 @@
                (not (and (sequential? uris) (<= (count uris) 1000)
                          (every? #(and (string? %) (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" %)) uris))))
       (throw (error :invalid-params "resourceSubscriptions must be a list of absolute URIs")))
+    (when (and (contains? requested "taskIds") (:task-store srv))
+      (let [ids (get requested "taskIds")]
+        (when-not (and (sequential? ids) (<= (count ids) 100)
+                       (every? #(and (string? %) (seq %) (<= (alength (.getBytes ^String % "UTF-8")) 256)) ids))
+          (throw (error :invalid-params "taskIds must be a list of at most 100 task ids")))
+        (require-tasks-declared! context)))
     (let [caps (capabilities srv)
           kinds (set (for [[flag kind] flags
                            :when (and (true? (get requested flag))
                                       (get-in caps [kind "listChanged"]))]
                        kind))
           uris (when (and (:subscribe srv) (seq uris)) (vec uris))
+          scope (get-in context [:auth :subject])
+          ;; only tasks this caller may see; unknown ones are dropped
+          task-ids (when-let [st (:task-store srv)]
+                     (not-empty (vec (distinct (filter #(tasks/lookup st % scope) (get requested "taskIds"))))))
           ack (cond-> (into {} (for [[flag kind] flags :when (kinds kind)] [flag true]))
-                uris (assoc "resourceSubscriptions" uris))
+                uris (assoc "resourceSubscriptions" uris)
+                task-ids (assoc "taskIds" task-ids))
           tag {sub-key id}
           listener-key (Object.)
           acked (promise)]
@@ -838,6 +857,8 @@
       (swap! (:listeners srv) assoc listener-key
              {:kinds kinds
               :uris uris
+              :task-ids (set task-ids)
+              :scope scope
               :send (fn [method params]
                       (deref acked 5000 nil)
                       (notify! context method (assoc params "_meta" tag)))
@@ -929,7 +950,7 @@
              (if legacy? (:legacy? m) (:stateless? m true))
              (cond
                (nil? capability) true
-               (= ::subscriptions capability) (or (:list-changed srv) (:subscribe srv))
+               (= ::subscriptions capability) (or (:list-changed srv) (:subscribe srv) (:task-store srv))
                (= ::tasks capability) (some? (:task-store srv))
                :else (contains? (capabilities srv) capability)))
       f

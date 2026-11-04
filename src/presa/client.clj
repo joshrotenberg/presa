@@ -589,31 +589,46 @@
 (def ^:private terminal-statuses #{"completed" "failed" "cancelled"})
 
 (defn await-task
-  "Poll a task until it is completed, failed or cancelled, answering its
-  input requests with the client's :handlers, and return the final
-  tasks/get result. task is a taskId or a CreateTaskResult. Polls at the
-  task's pollIntervalMs (default 250). opts: :timeout-ms for the whole wait
-  (default 600000)."
+  "Wait until a task is completed, failed or cancelled, answering its input
+  requests with the client's :handlers, and return the final tasks/get
+  result. task is a taskId or a CreateTaskResult. opts:
+
+  - :timeout-ms  for the whole wait (default 600000)
+  - :listen?     follow the task's notifications/tasks on a
+                 subscriptions/listen stream instead of polling at
+                 pollIntervalMs; when the server does not accept the
+                 subscription, or a notification is missed, a slow poll
+                 still finds the end"
   ([client task] (await-task client task {}))
-  ([client task {:keys [timeout-ms] :or {timeout-ms 600000}}]
+  ([client task {:keys [timeout-ms listen?] :or {timeout-ms 600000}}]
    (let [id (if (map? task) (get task "taskId") task)
-         deadline (+ (System/currentTimeMillis) timeout-ms)]
-     (loop [answered #{}]
-       (let [t (request client "tasks/get" {"taskId" id})
-             status (get t "status")]
-         (cond
-           (terminal-statuses status) t
+         deadline (+ (System/currentTimeMillis) timeout-ms)
+         signal (atom (promise))
+         sub (when (and listen? (stateless? client))
+               (listen client {"taskIds" [id]}
+                       (fn [{:strs [method]}]
+                         (when (= "notifications/tasks" method) (deliver @signal true)))))
+         following? (boolean (and sub (seq (get-in (deref (:acknowledged sub) 5000 nil) ["notifications" "taskIds"]))))]
+     (try
+       (loop [answered #{}]
+         (let [t (request client "tasks/get" {"taskId" id})
+               status (get t "status")
+               interval (long (get t "pollIntervalMs" 250))
+               wait! (fn []
+                       (deref @signal (if following? (* 20 interval) interval) nil)
+                       (reset! signal (promise)))]
+           (cond
+             (terminal-statuses status) t
 
-           (> (System/currentTimeMillis) deadline)
-           (throw (ex-info (str "Task " id " did not finish in " timeout-ms " ms") {:kind :timeout :task-id id}))
+             (> (System/currentTimeMillis) deadline)
+             (throw (ex-info (str "Task " id " did not finish in " timeout-ms " ms") {:kind :timeout :task-id id}))
 
-           (= "input_required" status)
-           (let [pending (remove (comp answered key) (get t "inputRequests"))]
-             (when (seq pending)
-               (update-task client id (answer-inputs client (into {} pending))))
-             (Thread/sleep (long (get t "pollIntervalMs" 250)))
-             (recur (into answered (map key pending))))
+             (= "input_required" status)
+             (let [pending (remove (comp answered key) (get t "inputRequests"))]
+               (when (seq pending)
+                 (update-task client id (answer-inputs client (into {} pending))))
+               (when (empty? pending) (wait!))
+               (recur (into answered (map key pending))))
 
-           :else
-           (do (Thread/sleep (long (get t "pollIntervalMs" 250)))
-               (recur answered))))))))
+             :else (do (wait!) (recur answered)))))
+       (finally (when sub ((:stop! sub))))))))
