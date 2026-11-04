@@ -56,7 +56,10 @@
       (swap! (:pending client) dissoc id)
       (deliver p message))))
 
+(declare invalidate!)
+
 (defn- route-notification [client {:strs [method params] :as message}]
+  (invalidate! client message)
   (when-let [f (get @(:subscriptions client)
                     (get-in params ["_meta" (:subscription-id protocol/meta-keys)]))]
     (f message))
@@ -163,6 +166,76 @@
                  [id (f params)])))
         requests))
 
+(defn- request*
+  "request without the cache."
+  [client method params opts]
+  (loop [params params round 1]
+    (let [response (send-request client method params (assoc opts :stateless? (stateless? client)))
+          result (get response "result")]
+      (cond
+        (contains? response "error")
+        (throw (protocol-error (get response "error")))
+
+        (and (map? result) (= "input_required" (get result "resultType")))
+        (do (when (> round max-input-rounds)
+              (throw (ex-info (str method " asked for input more than " max-input-rounds " times")
+                              {:kind :protocol :method method})))
+            (recur (cond-> (assoc (dissoc (or params {}) "requestState" "_meta")
+                                  "inputResponses" (answer-inputs client (get result "inputRequests")))
+                     (contains? result "requestState") (assoc "requestState" (get result "requestState")))
+                   (inc round)))
+
+        :else result))))
+
+;; Caching by ttlMs
+
+(def ^:private cache-kinds
+  {"server/discover" nil "tools/list" "tools" "prompts/list" "prompts"
+   "resources/list" "resources" "resources/templates/list" "resources"
+   "resources/read" "resources"})
+
+(defn- cache-key [client method params]
+  (when (and (:cache client) (contains? cache-kinds method) (stateless? client))
+    [method (dissoc (or params {}) "_meta")]))
+
+(defn- now-ms [] (System/currentTimeMillis))
+
+(defn- cached [client k]
+  (when-let [{:keys [result expires]} (get @(:cache client) k)]
+    (if (< (now-ms) expires)
+      result
+      (do (swap! (:cache client) dissoc k) nil))))
+
+(defn- store! [client k result]
+  (let [ttl (get result "ttlMs")]
+    (when (and (integer? ttl) (pos? ttl))
+      (swap! (:cache client) assoc k {:result result :expires (+ (now-ms) ttl)}))))
+
+(defn- invalidate!
+  "Drop cached results a notification makes stale."
+  [client {:strs [method params]}]
+  (when-let [cache (:cache client)]
+    (case method
+      ("notifications/tools/list_changed" "notifications/prompts/list_changed"
+       "notifications/resources/list_changed")
+      (let [kind (second (re-find #"notifications/(\w+)/list_changed" method))]
+        (swap! cache (fn [m] (into {} (remove (fn [[[cm] _]] (and (= kind (cache-kinds cm)) (not= "resources/read" cm)))) m))))
+
+      "notifications/resources/updated"
+      (let [uri (get params "uri")]
+        (swap! cache (fn [m] (into {} (remove (fn [[[cm p] _]]
+                                                (and (= "resources/read" cm)
+                                                     (let [u (get p "uri")]
+                                                       (or (= u uri) (str/starts-with? (str uri) (str u "/")))))))
+                                   m))))
+      nil)))
+
+(defn clear-cache!
+  "Forget every cached result."
+  [client]
+  (some-> (:cache client) (reset! {}))
+  nil)
+
 (defn request
   "Send a request and return its result map, or throw for a JSON-RPC error.
   When a 2026-07-28 server answers input_required, the client answers each
@@ -174,27 +247,22 @@
   - :on-progress  (fn [params]) for notifications/progress about this request
   - :log-level    the least severe log level to receive, on 2026-07-28
                   (default the client's :log-level)
-  - :meta         more _meta entries"
+  - :meta         more _meta entries
+  - :no-cache     true to ask the server even when the cache holds a result
+
+  With :cache on the client, 2026-07-28 discover, list and read results
+  are kept for their ttlMs and served from memory until then, and list
+  changes and resource updates from a subscription drop what they make
+  stale."
   ([client method] (request client method nil {}))
   ([client method params] (request client method params {}))
   ([client method params opts]
-   (loop [params params round 1]
-     (let [response (send-request client method params (assoc opts :stateless? (stateless? client)))
-           result (get response "result")]
-       (cond
-         (contains? response "error")
-         (throw (protocol-error (get response "error")))
-
-         (and (map? result) (= "input_required" (get result "resultType")))
-         (do (when (> round max-input-rounds)
-               (throw (ex-info (str method " asked for input more than " max-input-rounds " times")
-                               {:kind :protocol :method method})))
-             (recur (cond-> (assoc (dissoc (or params {}) "requestState" "_meta")
-                                   "inputResponses" (answer-inputs client (get result "inputRequests")))
-                      (contains? result "requestState") (assoc "requestState" (get result "requestState")))
-                    (inc round)))
-
-         :else result)))))
+   ;; :no-cache skips the lookup; the fresh result still replaces the entry
+   (let [k (cache-key client method params)]
+     (or (when (and k (not (:no-cache opts))) (cached client k))
+         (let [result (request* client method params opts)]
+           (when k (store! client k result))
+           result)))))
 
 (defn notify
   "Send the server a notification."
@@ -270,6 +338,8 @@
                    `set-log-level`
   - :on-log        (fn [params]) for notifications/message
   - :on-notification  (fn [message]) for every notification
+  - :cache         true to cache 2026-07-28 results by their ttlMs; see
+                   `request`
   - :handlers      {method (fn [params])} answering what a server asks
                    for: \"elicitation/create\", \"sampling/createMessage\",
                    \"roots/list\". They answer input requests in 2026-07-28
@@ -287,6 +357,7 @@
                  :pending (atom {})
                  :progress (atom {})
                  :subscriptions (atom {})
+                 :cache (when (:cache opts) (atom {}))
                  :next-id (atom 0)
                  :closed (atom false)
                  :state (atom {})}
