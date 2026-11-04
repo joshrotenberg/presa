@@ -2,7 +2,10 @@
   "Runs the clojure code blocks of docs/guides/*.md, in order, one fresh
   namespace per guide. A block after an HTML comment <!-- no-run --> is
   skipped. A line `;; => value` after an expression checks that the code
-  since the previous check returns value."
+  since the previous check returns value.
+
+  REPL walkthroughs (`walkthroughs`) are checked the same way: the forms of
+  the file's top-level (comment ...) block, in the file's namespace."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
@@ -42,6 +45,31 @@
           (when expected
             (is (= (read-string expected) v) (str (.getName (io/file file)) ": " (str/trim code)))))))
     (remove-ns ns-sym)))
+
+(def walkthroughs ["examples/presa/example/notebook_repl.clj"])
+
+(defn- comment-body
+  "The lines between a line \"(comment\" and the next line \")\"."
+  [text]
+  (->> (str/split-lines text)
+       (drop-while #(not= "(comment" (str/trim %)))
+       rest
+       (take-while #(not= ")" (str/trim %)))))
+
+(defn- run-walkthrough [file]
+  (let [text (slurp file)
+        header (subs text 0 (str/index-of text "\n(comment"))]
+    (load-string header)
+    (binding [*ns* (the-ns (second (read-string header)))]
+      (doseq [[code expected] (steps (comment-body text))]
+        (let [v (load-string code)]
+          (when expected
+            (is (= (read-string expected) v) (str (.getName (io/file file)) ": " (str/trim code)))))))))
+
+(deftest repl-walkthroughs
+  (doseq [f walkthroughs]
+    (testing f
+      (run-walkthrough f))))
 
 (deftest guides
   (doseq [f (sort-by str (filter #(str/ends-with? (str %) ".md") (file-seq (io/file "docs/guides"))))]
