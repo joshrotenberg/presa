@@ -58,173 +58,46 @@ gives the sha.
 
 [docs/roadmap.md](docs/roadmap.md) lists what is done and what is next.
 
-## A tools server over stdio
+## A first server
 
 ```clojure
-(ns my.server
-  (:require [presa.protocol :as protocol]
-            [presa.server :as server]
-            [presa.transport.stdio :as stdio]))
+(require '[presa.protocol :as protocol]
+         '[presa.server :as server]
+         '[presa.transport.stdio :as stdio])
 
 (def srv
   (server/server
-   {:name "my-server"
-    :version "0.1.0"
-    ;; 2026-07-28 alone is the default; add the initialize-era
-    ;; revisions so Codex can connect too.
-    :versions protocol/versions
-    :tools [{:name "echo"
-             :description "Return the given text."
-             :input-schema {"type" "object"
-                            "properties" {"text" {"type" "string"}}
-                            "required" ["text"]}
-             :handler (fn [{:strs [text]} _context] text)}]}))
+   {:name "greeter" :version "0.1.0"
+    :versions protocol/versions          ; 2026-07-28 and the initialize-era revisions
+    :tools [{:name "greet"
+             :description "Greet someone by name."
+             :input-schema {"type" "object" "properties" {"name" {"type" "string"}} "required" ["name"]}
+             :handler (fn [{:strs [name]} _context] (str "Hello, " name "!"))}]}))
 
-(defn -main [& _]
-  (stdio/serve! srv)
-  (shutdown-agents))
+(defn -main [& _] (stdio/serve! srv) (shutdown-agents))
 ```
 
-A handler gets the call's arguments (a map with string keys) and a context
-map (`:version`, `:client-info`, `:client-capabilities`, `:meta`,
-`:request-id`). It returns a string (text content), a map (structured
-content), a full result map with `"content"`, or `(server/tool-error msg)`; a
-handler that throws becomes an `isError` result. `stdio/serve!` runs each
-request on its own thread and binds `*out*` to `*err*` in handlers, so
-printing cannot corrupt the protocol stream.
+## Guides
 
-### A client
+| Guide | Covers |
+|---|---|
+| [Getting started](docs/guides/getting-started.md) | a server, a client in the same process, stdio, registering with Claude Code and Codex |
+| [Tools, resources and prompts](docs/guides/components.md) | handlers and their results, schemas, templates, completion, pagination, changing a running server, caching hints |
+| [The client](docs/guides/client.md) | connecting, calls, progress, logs, timeouts, handlers, caching |
+| [Transports](docs/guides/transports.md) | stdio, Streamable HTTP and its options, sessions |
+| [Asking the client for input](docs/guides/input.md) | elicitation, sampling, roots, signed request state, both eras |
+| [Subscriptions](docs/guides/subscriptions.md) | `subscriptions/listen`, list changes, resource updates |
+| [Tasks](docs/guides/tasks.md) | the Tasks extension: long-running tools, server and client |
+| [Authorization](docs/guides/authorization.md) | the OAuth 2.1 resource server, JWT verification, scopes |
+| [Initialize-era clients](docs/guides/initialize-era.md) | serving 2025-11-25 and 2025-06-18, and what differs |
+| [Logging, progress and instrumentation](docs/guides/observability.md) | `log!`, `progress!`, `:on-event` |
 
-```clojure
-(require '[presa.client :as client]
-         '[presa.transport.stdio :as stdio])
+Every code block in the guides runs as part of the test suite.
 
-(def c (client/connect (stdio/command ["bb" "--config" "/path/to/presa/bb.edn"
-                                       "-m" "presa.example.hello"])))
-(client/info c)                                    ; {:version "2026-07-28" ...}
-(client/list-tools c)                              ; every page
-(client/call-tool c "add" {"numbers" [1 2 3]})     ; {"structuredContent" {"sum" 6} ...}
-((get (client/tool-fns c) "echo") {"text" "hi"})
-(client/close c)
-```
-
-`client/in-process` connects to a server map in the same process, which is
-how presa's own tests drive servers. `connect` tries `server/discover`
-first and falls back to `initialize` when the server does not answer as a
-2026-07-28 server. Requests take `:timeout-ms` (a timeout cancels the
-request on the server), `:on-progress` and `:log-level`; `connect` takes
-`:on-log`.
-
-### Changing a running server
-
-A server's definitions can change while it serves. Each request reads one
-consistent snapshot; clients listening for list changes are told when the
-server has `:list-changed`, and pagination cursors from before a change
-expire.
-
-```clojure
-(server/add-tool! srv {:name "late" :handler (fn [_ _] "added while serving")})
-(server/remove-tool! srv "late")
-;; also add-resource!, remove-resource!, add-resource-template!,
-;; remove-resource-template!, add-prompt!, remove-prompt!
-```
-
-## Over HTTP
-
-```clojure
-(require '[presa.transport.http :as http])
-
-(def running (http/serve! srv {:port 3000}))   ; {:url "http://127.0.0.1:3000/mcp" ...}
-(def c (client/connect (http/url (:url running))))
-((:stop! running))
-```
-
-The server follows the 2026-07-28 Streamable HTTP rules: POST only,
-`MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` checked against the
-body, JSON responses that turn into event streams when a handler reports
-progress or logs, and only loopback origins unless `:allowed-origins` says
-otherwise. Initialize-era clients get an `Mcp-Session-Id`.
-`http/handler` returns the ring handler for embedding in another http-kit
-server.
-
-### Requiring OAuth tokens
-
-An HTTP server can act as an OAuth 2.1 resource server: it publishes its
-protected resource metadata, requires a bearer token on every request, and
-answers a missing or bad token with a `WWW-Authenticate` challenge naming
-that metadata.
-
-```clojure
-(require '[presa.auth :as auth] '[presa.auth.jwt :as jwt])
-
-(def resource "https://mcp.example.com/mcp")
-
-(http/serve! srv {:auth (auth/resource-server
-                         {:resource resource
-                          :verify (jwt/verifier {:audience resource
-                                                 :issuer "https://auth.example.com"
-                                                 :jwks-url "https://auth.example.com/.well-known/jwks.json"})
-                          :authorization-servers ["https://auth.example.com"]
-                          :required-scopes ["mcp:read"]})})
-```
-
-Handlers see the caller as `(:auth context)` (`:subject`, `:client-id`,
-`:scopes`, `:claims`; never the raw token). `server` takes
-`:required-scopes` per tool, prompt, resource or template: a caller without
-them does not see the component, and a call to it is -32003.
-
-## Long-running tools as tasks
-
-With `:tasks` on the server (the `io.modelcontextprotocol/tasks`
-extension), a tool marked `:task :optional` or `:required` runs as a task
-for clients that declare the extension: `tools/call` answers at once with a
-task id, and the client polls `tasks/get`, answers input with
-`tasks/update`, or cancels with `tasks/cancel`.
-
-```clojure
-(server/server {:name "jobs" :version "0.1.0"
-                :tasks {:ttl-ms 3600000}
-                :tools [{:name "build" :task :optional
-                         :handler (fn [args ctx] (run-build! args ctx))}]})
-
-(def c (client/connect transport {:tasks true :handlers handlers}))
-(let [created (client/call-tool c "build" {"target" "all"})]
-  (if (client/task? created)
-    (client/await-task c created)   ; polls, answers input with :handlers
-    created))
-```
-
-A handler inside a task can return `server/input-required` as usual; the
-task waits at `input_required` until the client answers. Clients that do
-not declare Tasks get optional tools synchronously and required ones as
--32021. See [docs/tasks-extension.md](docs/tasks-extension.md).
-
-## Asking the client for input
-
-A tool, resource or prompt handler can ask the client for input before it
-finishes:
-
-```clojure
-(require '[presa.input :as input])
-
-{:name "greet"
- :handler (fn [_ ctx]
-            (if-let [{:strs [content]} (server/input-response ctx "who")]
-              (str "Hello, " (get content "name"))
-              (server/input-required
-               {"who" (input/elicit "Who should I greet?"
-                                    {"type" "object" "properties" {"name" {"type" "string"}}})})))}
-```
-
-On 2026-07-28 this is an `input_required` result; the client answers on a
-new request with the server's signed `requestState`, and presa checks both.
-On an initialize-era session presa sends the request to the client and
-calls the handler again. A presa client answers with its `:handlers`:
-
-```clojure
-(client/connect transport {:handlers {"elicitation/create"
-                                      (fn [_] {"action" "accept" "content" {"name" "Ada"}})}})
-```
+Reference: [docs/wire-2026-07-28.md](docs/wire-2026-07-28.md) (the
+revision on the wire), [docs/tasks-extension.md](docs/tasks-extension.md),
+[docs/hosts.md](docs/hosts.md) (what real hosts send),
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Conformance
 
@@ -237,46 +110,13 @@ scenario.
 ## The example server
 
 [`examples/presa/example/hello.clj`](examples/presa/example/hello.clj) has two
-tools, `echo` and `add`, and serves every revision presa knows. It runs from
-any directory with
+tools, `echo` and `add`, and serves every revision presa knows:
 
 ```sh
-bb --config /path/to/presa/bb.edn -m presa.example.hello
-```
-
-or on the JVM from the repository root with `clojure -M:example`.
-
-Register it with Claude Code (`--scope user` for every project; the default
-is the current project only):
-
-```sh
+bb --config /path/to/presa/bb.edn -m presa.example.hello   # or, from the repository, clojure -M:example
 claude mcp add presa-hello -- bb --config /path/to/presa/bb.edn -m presa.example.hello
-```
-
-or in a project's `.mcp.json`:
-
-```json
-{"mcpServers": {"presa-hello": {"command": "bb",
-                                "args": ["--config", "/path/to/presa/bb.edn", "-m", "presa.example.hello"]}}}
-```
-
-Register it with Codex:
-
-```sh
 codex mcp add presa-hello -- bb --config /path/to/presa/bb.edn -m presa.example.hello
 ```
-
-or in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.presa-hello]
-command = "bb"
-args = ["--config", "/path/to/presa/bb.edn", "-m", "presa.example.hello"]
-```
-
-Claude Code names the tools `mcp__presa-hello__echo` and
-`mcp__presa-hello__add`; Codex names them `mcp__presa_hello__echo` and
-`mcp__presa_hello__add`.
 
 ## Development
 
