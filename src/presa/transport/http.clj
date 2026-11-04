@@ -647,6 +647,10 @@
                           (if (and (= 200 (.statusCode resp)) (str/starts-with? content-type "text/event-stream"))
                             resp
                             (do (.close ^java.io.InputStream (.body resp)) nil)))))
+           for-request (fn [id]
+                         ;; what arrives on a request's own stream was sent
+                         ;; for that request
+                         (fn [m] (deliver! (vary-meta m assoc :presa/related-request id))))
            resume! (fn [id {:keys [last-event-id retry-ms]}]
                      ;; The server ended a POST stream before the response:
                      ;; reconnect with GET and Last-Event-ID, after retry-ms.
@@ -654,7 +658,7 @@
                        (when (and (not @closed) (not (contains? @answered id)) (< attempts 5))
                          (Thread/sleep (long (or (:retry-ms seen) 1000)))
                          (when-let [^HttpResponse resp (open-get (:last-event-id seen))]
-                           (let [more (try (read-events (.body resp) deliver!) (catch java.io.IOException _ {}))]
+                           (let [more (try (read-events (.body resp) (for-request id)) (catch java.io.IOException _ {}))]
                              (recur (merge seen more) (inc attempts)))))))
            session-stream! (fn [ready]
                              ;; The standalone stream an initialize-era server
@@ -724,7 +728,9 @@
                         (str/starts-with? content-type "text/event-stream")
                         (let [body (.body resp)
                               _ (when (some? id) (swap! streams update id assoc :body body))
-                              seen (try (read-events body deliver!)
+                              seen (try (read-events body (if (and (some? id) (contains? message "method"))
+                                                            (for-request id)
+                                                            deliver!))
                                         (catch java.io.IOException e
                                           (when-not (contains? @streams id) (throw e))
                                           ::cancelled)

@@ -78,5 +78,5 @@ Open work is filed as issues, labelled by priority and area:
 |---|---|
 | joshrotenberg/presa#42 DPoP for the OAuth client | p3 |
 | joshrotenberg/presa#43 workload identity and enterprise-managed authorization grants | p3 |
-| joshrotenberg/presa#44 task status notifications on subscriptions/listen | p3 |
-| joshrotenberg/presa#45 proxy log forwarding and initialize-era backend input | p3 |
+| joshrotenberg/presa#49 a complete example: server, client walkthrough, hosts | p2 |
+| joshrotenberg/presa#50 client 2025-11-25 conformance lane flakes in CI | p2 |

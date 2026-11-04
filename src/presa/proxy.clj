@@ -3,51 +3,158 @@
   presa.client connection; its tools and prompts appear under a prefix
   (\"<prefix>_<name>\"), its resources and resource templates under their own
   URIs. Calls are forwarded with the caller's progress token and log level;
-  a backend's input_required is passed to the caller and its answers back,
-  with the backend's requestState kept in the proxy's own signed state; a
-  backend's list changes resync the proxy and reach the proxy's listeners.
+  a backend's list changes resync the proxy and reach the proxy's listeners.
 
-  Not forwarded: log messages from backends (over stdio they cannot be
-  matched to a request), and subscriptions to backend resources."
+  Input: a 2026-07-28 backend's input_required is passed to the caller and
+  its answers back, with the backend's requestState kept in the proxy's own
+  signed state. An initialize-era backend asks with requests of its own
+  (elicitation/create, sampling/createMessage, roots/list) while the call
+  runs: the proxy parks the call, asks the caller with input_required, and
+  hands the caller's answer to the backend when the caller retries. A parked
+  call lives in this process; one the caller does not answer within the
+  backend client's timeout fails the backend's request. A backend asks only
+  for what its client declared when it connected (see presa.client/connect
+  :capabilities).
+
+  Logs: a backend's log messages about a call reach the caller through
+  presa.server/log!, filtered by the caller's level.
+
+  Over stdio, a backend's log messages and requests cannot be matched to a
+  call, so neither is forwarded: they go to the backend client's own :on-log
+  and :handlers. Backends on in-process and HTTP transports are matched.
+  Subscriptions to backend resources are not forwarded."
   (:require [presa.client :as client]
-            [presa.server :as server]))
+            [presa.server :as server])
+  (:import (java.security SecureRandom)
+           (java.util Base64)
+           (java.util.concurrent LinkedBlockingQueue TimeUnit)))
 
 (defn- forward-progress [ctx]
   (fn [{:strs [progress total message]}]
     (server/progress! ctx progress (cond-> {} total (assoc :total total) message (assoc :message message)))))
 
+(defn- forward-log [ctx]
+  (fn [{:strs [level data logger]}]
+    (when (string? level)
+      (try (server/log! ctx level data logger) (catch Exception _ nil)))))
+
 (defn- call-opts [ctx]
   (cond-> {:input :return
            :on-progress (forward-progress ctx)
+           :on-log (forward-log ctx)
            ;; the backend asks for what the caller can answer
            :meta {"io.modelcontextprotocol/clientCapabilities" (or (:client-capabilities ctx) {})}}
     (:log-level ctx) (assoc :log-level (:log-level ctx))))
 
-(defn- forward
-  "Send method with params to c on behalf of the request of ctx. An
-  input_required answer becomes the proxy's own, carrying the backend's
+(def ^:private input-capabilities
+  {"elicitation/create" "elicitation" "sampling/createMessage" "sampling" "roots/list" "roots"})
+
+(defn- new-id []
+  (let [b (byte-array 18)]
+    (.nextBytes (SecureRandom.) b)
+    (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b)))
+
+(defn- park!
+  "Keep a call waiting on the caller's answer to ask, an initialize-era
+  backend's request; returns the proxy's input_required. When the caller
+  cannot answer it (it did not declare the capability), the backend's
+  request fails now and the caller gets the -32021 that presa sends for
+  the input_required."
+  [parked call ctx {:keys [method params reply]}]
+  (let [id (new-id)
+        asked {"backend" {"method" method "params" params}}]
+    (if (contains? (:client-capabilities ctx) (input-capabilities method))
+      (swap! parked assoc id (assoc call :reply reply :asked asked))
+      (deliver reply ::refused))
+    (server/input-required asked {"parked" id})))
+
+(defn- settle
+  "What a call that ended returns to the caller. An input_required from a
+  2026-07-28 backend becomes the proxy's own, carrying the backend's
   requestState in the proxy's state; the retry brings the answers back."
-  [c method params ctx]
-  (let [state (:state ctx)
-        params (cond-> params
-                 (seq (:input-responses ctx)) (assoc "inputResponses" (:input-responses ctx))
-                 (get state "backendState") (assoc "requestState" (get state "backendState")))
-        result (client/request c method params (call-opts ctx))]
-    (if (= "input_required" (get result "resultType"))
-      (server/input-required (get result "inputRequests" {})
-                             (cond-> {"proxied" true}
-                               (contains? result "requestState") (assoc "backendState" (get result "requestState"))))
-      result)))
+  [result]
+  (if (= "input_required" (get result "resultType"))
+    (server/input-required (get result "inputRequests" {})
+                           (cond-> {"proxied" true}
+                             (contains? result "requestState") (assoc "backendState" (get result "requestState"))))
+    result))
+
+(defn- next-event
+  "Wait for what the call does next: [:ask ask], [:done result] or [:error e]."
+  [{:keys [^LinkedBlockingQueue events timeout-ms]}]
+  (or (.poll events (long (+ timeout-ms 1000)) TimeUnit/MILLISECONDS)
+      [:error (ex-info (str "The backend did not answer within " timeout-ms " ms") {:kind :timeout})]))
+
+(defn- follow
+  "Follow call until it ends or asks for input."
+  [parked call ctx]
+  (let [[kind v] (next-event call)]
+    (case kind
+      :ask (park! parked call ctx v)
+      :done (settle v)
+      :error (throw v))))
+
+(defn- start-call
+  "Send method with params to c in the background. Requests the backend
+  sends for the call become :ask events whose :reply the caller's answer
+  is delivered to."
+  [c method params ctx parked]
+  (let [events (LinkedBlockingQueue.)
+        timeout-ms (or (get-in c [:opts :timeout-ms]) client/default-timeout-ms)
+        ask (fn [method]
+              (fn [params]
+                (let [reply (promise)
+                      ask {:method method :params params :reply reply}]
+                  (.put events [:ask ask])
+                  (let [answer (deref reply timeout-ms ::timeout)]
+                    (case answer
+                      ::timeout
+                      ;; the caller never came back: forget the parked call
+                      (do (swap! parked (fn [m] (into {} (remove (fn [[_ call]] (= events (:events call)))) m)))
+                          (throw (ex-info "The caller did not answer in time"
+                                          {:presa/error {:code -32603 :message "The caller did not answer in time"}})))
+                      ::refused
+                      (throw (ex-info (str "The caller cannot answer " method)
+                                      {:presa/error {:code -32601 :message (str "The caller cannot answer " method)}}))
+                      answer)))))
+        handlers (into {} (map (fn [m] [m (ask m)])) (keys input-capabilities))
+        call {:events events :timeout-ms timeout-ms}]
+    (future
+      (try (.put events [:done (client/request c method params (assoc (call-opts ctx) :handlers handlers))])
+           (catch Throwable e (.put events [:error e]))))
+    call))
+
+(defn- forward
+  "Send method with params to c on behalf of the request of ctx, or carry
+  on with a call parked on the caller's answer (see the namespace doc)."
+  [parked c method params ctx]
+  (let [state (:state ctx)]
+    (if-let [parked-id (get state "parked")]
+      (let [gone #(ex-info "The proxied call is no longer waiting for input"
+                           {:presa/error {:code -32602 :message "The proxied call is no longer waiting for input"}})
+            answer (server/input-response ctx "backend")]
+        (if (nil? answer)
+          ;; asked again for the same input
+          (server/input-required (:asked (or (get @parked parked-id) (throw (gone)))) state)
+          ;; one retry claims the call
+          (let [call (get (first (swap-vals! parked dissoc parked-id)) parked-id)]
+            (when-not call (throw (gone)))
+            (deliver (:reply call) answer)
+            (follow parked (dissoc call :reply :asked) ctx))))
+      (let [params (cond-> params
+                     (seq (:input-responses ctx)) (assoc "inputResponses" (:input-responses ctx))
+                     (get state "backendState") (assoc "requestState" (get state "backendState")))]
+        (follow parked (start-call c method params ctx parked) ctx)))))
 
 (defn- strip [result]
   (dissoc result "resultType" "_meta" "ttlMs" "cacheScope"))
 
-(defn- tool-defs [prefix sep c]
+(defn- tool-defs [prefix sep c parked]
   (for [{:strs [name title description inputSchema outputSchema annotations]} (client/list-tools c)]
     (cond-> {:name (str prefix sep name)
              :input-schema inputSchema
              :handler (fn [arguments ctx]
-                        (let [r (forward c "tools/call" {"name" name "arguments" arguments} ctx)]
+                        (let [r (forward parked c "tools/call" {"name" name "arguments" arguments} ctx)]
                           (if (contains? r ::server/input-required) r (strip r))))}
       title (assoc :title title)
       description (assoc :description description)
@@ -59,7 +166,7 @@
              [a (fn [value others _]
                   (client/complete c ref a value others))])))
 
-(defn- prompt-defs [prefix sep c]
+(defn- prompt-defs [prefix sep c parked]
   (for [{:strs [name title description arguments]} (client/list-prompts c)]
     (cond-> {:name (str prefix sep name)
              :arguments (mapv (fn [{:strs [name description required]}]
@@ -67,28 +174,28 @@
                                   description (assoc :description description)
                                   (some? required) (assoc :required required)))
                               arguments)
-             :handler (fn [args ctx] (let [r (forward c "prompts/get" {"name" name "arguments" args} ctx)]
+             :handler (fn [args ctx] (let [r (forward parked c "prompts/get" {"name" name "arguments" args} ctx)]
                                        (if (contains? r "messages") (strip r) r)))
              :complete (complete-fns c {"type" "ref/prompt" "name" name} (map #(get % "name") arguments))}
       title (assoc :title title)
       description (assoc :description description))))
 
-(defn- read-handler [c uri-of]
+(defn- read-handler [c uri-of parked]
   (fn [& args]
     (let [ctx (last args)
-          r (forward c "resources/read" {"uri" (uri-of ctx)} ctx)]
+          r (forward parked c "resources/read" {"uri" (uri-of ctx)} ctx)]
       (if (contains? r "contents") (get r "contents") r))))
 
-(defn- resource-defs [c]
+(defn- resource-defs [c parked]
   (for [{:strs [uri name title description mimeType size]} (client/list-resources c)]
-    (cond-> {:uri uri :name name :handler (read-handler c (constantly uri))}
+    (cond-> {:uri uri :name name :handler (read-handler c (constantly uri) parked)}
       title (assoc :title title) description (assoc :description description)
       mimeType (assoc :mime-type mimeType) size (assoc :size size))))
 
-(defn- template-defs [c]
+(defn- template-defs [c parked]
   (for [{:strs [uriTemplate name title description mimeType]} (client/list-resource-templates c)]
     (cond-> {:uri-template uriTemplate :name name
-             :handler (read-handler c :uri)
+             :handler (read-handler c :uri parked)
              :complete (complete-fns c {"type" "ref/resource" "uri" uriTemplate}
                                      (map second (re-seq #"\{\+?([A-Za-z0-9_.]+)\}" uriTemplate)))}
       title (assoc :title title) description (assoc :description description)
@@ -98,11 +205,11 @@
 
 (defn- catalog
   "The definitions a backend contributes."
-  [{:keys [prefix client separator] :or {separator "_"}}]
-  {:tools (if (has? client "tools") (vec (tool-defs prefix separator client)) [])
-   :prompts (if (has? client "prompts") (vec (prompt-defs prefix separator client)) [])
-   :resources (if (has? client "resources") (vec (resource-defs client)) [])
-   :templates (if (has? client "resources") (vec (template-defs client)) [])})
+  [{:keys [prefix client separator] ::keys [parked] :or {separator "_"}}]
+  {:tools (if (has? client "tools") (vec (tool-defs prefix separator client parked)) [])
+   :prompts (if (has? client "prompts") (vec (prompt-defs prefix separator client parked)) [])
+   :resources (if (has? client "resources") (vec (resource-defs client parked)) [])
+   :templates (if (has? client "resources") (vec (template-defs client parked)) [])})
 
 (defn- check-unique! [kind ks]
   (when-let [dups (seq (for [[k n] (frequencies ks) :when (> n 1)] k))]
@@ -127,21 +234,22 @@
   "A proxy over backends: {:prefix p :client c} maps, where c is a connected
   presa.client (`:separator` overrides \"_\" between prefix and name). opts
   are presa.server/server options (:name and :version required); the proxy
-  sets :list-changed itself. Returns {:server srv :close! f}: serve srv on
+  sets :list-changed itself, and :logging unless opts set it. Returns {:server srv :close! f}: serve srv on
   any transport, and (close!) stops following the backends' changes and
   closes their clients.
 
   Prefixed tool and prompt names, resource URIs and template URIs must not
   collide across backends."
   [backends opts]
-  (let [backends (vec (map-indexed (fn [i b] (assoc b ::index i)) backends))
+  (let [parked (atom {})
+        backends (vec (map-indexed (fn [i b] (assoc b ::index i ::parked parked)) backends))
         catalogs (atom (into {} (map (fn [b] [(::index b) (catalog b)])) backends))
         all (fn [k] (mapcat k (vals @catalogs)))]
     (check-unique! :tools (map :name (all :tools)))
     (check-unique! :prompts (map :name (all :prompts)))
     (check-unique! :resources (map :uri (all :resources)))
     (check-unique! :resource-templates (map :uri-template (all :templates)))
-    (let [srv (server/server (merge opts {:list-changed true
+    (let [srv (server/server (merge {:logging true} opts {:list-changed true
                                           :tools (vec (all :tools))
                                           :prompts (vec (all :prompts))
                                           :resources (vec (all :resources))

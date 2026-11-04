@@ -92,6 +92,7 @@ gives the sha.
 | [Subscriptions](docs/guides/subscriptions.md) | `subscriptions/listen`, list changes, resource updates |
 | [Tasks](docs/guides/tasks.md) | the Tasks extension: long-running tools, server and client |
 | [Authorization](docs/guides/authorization.md) | the OAuth 2.1 resource server and client, JWT verification, scopes |
+| [The proxy](docs/guides/proxy.md) | one server in front of several, what it forwards, input from initialize-era backends |
 | [Initialize-era clients](docs/guides/initialize-era.md) | serving 2025-11-25 and 2025-06-18, and what differs |
 | [Logging, progress and instrumentation](docs/guides/observability.md) | `log!`, `progress!`, `:on-event` |
 

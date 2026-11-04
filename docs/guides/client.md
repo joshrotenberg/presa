@@ -77,7 +77,11 @@ rather than throwing.
 `:on-progress` on a request receives its `notifications/progress`.
 `:log-level` (on `connect` or on a request) asks a 2026-07-28 server for
 log messages at that level and above, delivered to `:on-log`; on an
-initialize-era connection use `set-log-level`. `:timeout-ms` bounds a
+initialize-era connection use `set-log-level`. `:on-log` on a request
+takes that request's log messages in place of the client's, and
+`:handlers` on a request answer what the server asks while it runs, over
+the client's; both need a transport that can tell which request a message
+was sent for (in-process and HTTP can, stdio cannot). `:timeout-ms` bounds a
 request (default 60000); a timeout sends `notifications/cancelled` so the
 server stops the work.
 

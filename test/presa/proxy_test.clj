@@ -4,7 +4,8 @@
             [presa.input :as input]
             [presa.protocol :as protocol]
             [presa.proxy :as proxy]
-            [presa.server :as server]))
+            [presa.server :as server]
+            [presa.transport.http :as http]))
 
 (defn- backend-a []
   (server/server
@@ -71,3 +72,103 @@
                                                    {:prefix "x" :client (connect (backend-b))}]
                                                   {:name "p" :version "1"})
                               (catch Exception e e)))))))
+
+;; Logs and initialize-era input
+
+(defn- chatty-backend
+  "A backend that logs and, on initialize-era sessions, asks its client for
+  a name with elicitation/create."
+  ([] (chatty-backend {}))
+  ([opts]
+  (server/server
+   (merge opts
+   {:name "old" :version "1" :versions protocol/versions :logging true
+    :tools [{:name "noisy" :description "Logs at two levels"
+             :handler (fn [_ ctx]
+                        (server/log! ctx "debug" "a detail")
+                        (server/log! ctx "warning" "a warning" "noisy")
+                        "logged")}
+            {:name "greet" :description "Asks who to greet"
+             :handler (fn [_ ctx]
+                        (let [r (server/client-request! ctx "elicitation/create"
+                                                        {"mode" "form" "message" "who?"
+                                                         "requestedSchema" {"type" "object"
+                                                                            "properties" {"name" {"type" "string"}}}})]
+                          (str "hello " (get-in r ["content" "name"]))))}
+            {:name "greet-twice" :description "Asks twice"
+             :handler (fn [_ ctx]
+                        (let [ask #(get-in (server/client-request! ctx "elicitation/create"
+                                                                   {"mode" "form" "message" %
+                                                                    "requestedSchema" {"type" "object"
+                                                                                       "properties" {"name" {"type" "string"}}}})
+                                           ["content" "name"])]
+                          (str (ask "first?") " and " (ask "second?"))))}]}))))
+
+(def ^:private elicit-caps {"elicitation" {"form" {}}})
+
+(defn- names-from [names]
+  (let [left (atom names)]
+    {"elicitation/create" (fn [_] (let [n (first @left)] (swap! left rest)
+                                    {"action" "accept" "content" {"name" n}}))}))
+
+(defn- check-forwarding [backend-client]
+  (let [{:keys [server close!]} (proxy/proxy-server [{:prefix "old" :client backend-client}]
+                                                    {:name "front" :version "1" :versions protocol/versions})]
+    (try
+      (testing "logs reach the caller at its level"
+        (let [logs (atom [])
+              c (client/connect (client/in-process server) {:log-level "info" :on-log #(swap! logs conj %)})]
+          (try (is (= "logged" (client/text (client/call-tool c "old_noisy"))))
+               (is (= [{"level" "warning" "data" "a warning" "logger" "noisy"}] @logs))
+               (finally (client/close c)))))
+      (testing "a 2026-07-28 caller answers an initialize-era backend's request"
+        (let [c (client/connect (client/in-process server) {:handlers (names-from ["Ada"])})]
+          (try (is (= "hello Ada" (client/text (client/call-tool c "old_greet"))))
+               (finally (client/close c)))))
+      (testing "an initialize-era caller answers it too"
+        (let [c (client/connect (client/in-process server) {:versions ["2025-11-25"] :handlers (names-from ["Ada"])})]
+          (try (is (= "hello Ada" (client/text (client/call-tool c "old_greet"))))
+               (finally (client/close c)))))
+      (testing "a backend that asks twice is answered twice"
+        (let [c (client/connect (client/in-process server) {:handlers (names-from ["Ada" "Alan"])})]
+          (try (is (= "Ada and Alan" (client/text (client/call-tool c "old_greet-twice"))))
+               (finally (client/close c)))))
+      (finally (close!)))))
+
+(deftest forwarding-from-an-in-process-backend
+  (check-forwarding (client/connect (client/in-process (chatty-backend))
+                                    {:versions ["2025-11-25"] :capabilities elicit-caps :log-level "debug"})))
+
+(deftest forwarding-from-an-http-backend
+  (let [{:keys [url stop!]} (http/serve! (chatty-backend) {})]
+    (try
+      (check-forwarding (client/connect (http/url url)
+                                        {:versions ["2025-11-25"] :capabilities elicit-caps}))
+      (finally (stop!)))))
+
+(deftest a-stale-parked-call-is-refused
+  (let [stopped (atom (promise))
+        on-event (fn [{:keys [event method outcome]}]
+                   (when (and (= :request/stop event) (= "tools/call" method))
+                     (deliver @stopped outcome)))
+        {:keys [server close!]} (proxy/proxy-server [{:prefix "old" :client (client/connect (client/in-process (chatty-backend {:on-event on-event}))
+                                                                                            {:versions ["2025-11-25"] :capabilities elicit-caps})}]
+                                                    {:name "front" :version "1"})
+        c (client/connect (client/in-process server) {:capabilities elicit-caps})]
+    (try
+      (let [first-try (client/request c "tools/call" {"name" "old_greet" "arguments" {}} {:input :return})]
+        (is (= "input_required" (get first-try "resultType")))
+        (is (= "elicitation/create" (get-in first-try ["inputRequests" "backend" "method"])))
+        (let [answer {"inputResponses" {"backend" {"action" "accept" "content" {"name" "Ada"}}}
+                      "requestState" (get first-try "requestState")}
+              params (merge {"name" "old_greet" "arguments" {}} answer)]
+          (is (= "hello Ada" (client/text (client/request c "tools/call" params))))
+          (testing "the same state cannot resume the call again"
+            (is (= -32602 (:code (ex-data (try (client/request c "tools/call" params) (catch Exception e e)))))))))
+      (testing "a caller that cannot answer gets -32021 and the backend is not left waiting"
+        (reset! stopped (promise))
+        (let [plain (client/connect (client/in-process server))]
+          (try (is (= -32021 (:code (ex-data (try (client/call-tool plain "old_greet") (catch Exception e e))))))
+               (is (not= :still-waiting (deref @stopped 5000 :still-waiting)) "the backend's call ended at once")
+               (finally (client/close plain)))))
+      (finally (client/close c) (close!)))))
