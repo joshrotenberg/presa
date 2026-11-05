@@ -1,0 +1,8 @@
+;; A project for presa.bb's tests.
+{:tasks
+ {greet {:doc "Print a greeting" :mcp/tool true
+         :task (println "hello" (or (first *command-line-args*) "world"))}
+  test:unit {:doc "Fail with exit 3" :mcp/tool true
+             :task (do (binding [*out* *err*] (println "1 failure")) (System/exit 3))}
+  shout {:doc "Not opted in" :task (println "LOUD")}
+  -private {:task (println "never a tool")}}}
