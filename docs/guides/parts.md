@@ -72,3 +72,46 @@ Code in the same process uses the tools an agent sees this way:
 
 The notebook's `:close!` ran when `with-client` returned, so its notes are
 gone.
+
+## Precedence
+
+With `:duplicates :first`, `combine` (and `server`) keep the first part's
+tool, prompt or resource of a name and list the rest under `:dropped`, so
+earlier parts take precedence; `serve!` logs what was shadowed.
+
+```clojure
+(:dropped (part/combine [notebook {:tools [{:name "add" :handler (fn [_ _] "other")}]}]
+                        {:duplicates :first}))
+;; => [["tool" "add"]]
+```
+
+## Another server as a part
+
+`proxy` starts an MCP server over stdio and returns a part of its tools and
+resources, each call forwarded to it; its `:close!` ends the connection and
+the process. A server can front another one and keep its own tools first:
+
+<!-- no-run -->
+```clojure
+(part/serve! {:parts [my-tools (part/proxy ["bb" "--config" "/path/to/project/bb.edn" "mcp"])]
+              :duplicates :first})
+```
+
+## Parts from a bb.edn
+
+`presa.bb` makes parts from a project's `bb.edn`. `task-tools` turns each
+task marked `:mcp/tool true` into a tool that runs `bb --config <bb.edn>
+<task> args...` as a subprocess and answers with its exit code and output;
+`file-resources` serves text files; `project-parts` returns what a project
+directory offers: its `mcp` server, proxied, when it has one, else its
+opted-in tasks.
+
+<!-- no-run -->
+```clojure
+;; bb.edn
+{:deps {io.github.joshrotenberg/presa {:mvn/version "..."}}
+ :tasks
+ {test {:doc "Run the tests" :mcp/tool true :task (shell "bb test:all")}
+  mcp {:requires ([presa.part :as part] [presa.bb :as pb])
+       :task (part/serve! {:parts [(pb/task-tools) (pb/file-resources ["README.md"])]})}}}
+```

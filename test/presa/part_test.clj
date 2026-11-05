@@ -25,8 +25,29 @@
       (is (= [:a nil {:error "cannot close"}] ((:close! p))))
       (is (= [:a] @closed)))
     (testing "an empty combination"
-      (is (= {:tools [] :resources [] :resource-templates [] :prompts [] :instructions nil}
+      (is (= {:tools [] :resources [] :resource-templates [] :prompts [] :instructions nil :dropped []}
              (dissoc (part/combine []) :close!))))))
+
+(deftest precedence
+  (let [user {:tools [(tool "spawn" "user") (tool "a" "A")]}
+        project {:tools [(tool "spawn" "project") (tool "b" "B")]
+                 :resources [{:uri "x:/r" :name "r" :handler (fn [_] "")}]}
+        p (part/combine [user project {:resources [{:uri "x:/r" :name "again" :handler (fn [_] "")}]}]
+                        {:duplicates :first})]
+    (is (= ["spawn" "a" "b"] (map :name (:tools p))))
+    (is (= [["tool" "spawn"] ["resource" "x:/r"]] (:dropped p)))
+    (is (= "user" (part/with-client {:parts [user project] :duplicates :first} #(part/call % "spawn"))))))
+
+(deftest proxying
+  (let [p (part/proxy ["bb" "--config" (.getCanonicalPath (io/file "bb.edn")) "-m" "presa.example.hello"]
+                      {:stderr (fn [_])})]
+    (try
+      (is (= #{"echo" "add"} (set (map :name (:tools p)))))
+      (testing "calls are forwarded, as part of another server"
+        (is (= ["hi" "x"]
+               (part/with-client {:parts [(dissoc p :close!) {:tools [(tool "x" "x")]}]}
+                 (fn [c] [(part/call c "echo" {"text" "hi"}) (part/call c "x")])))))
+      (finally ((:close! p))))))
 
 (deftest duplicates
   (let [a {:tools [(tool "a" "A")] :resources [{:uri "x:/r" :name "r" :handler (fn [_] "")}]}]

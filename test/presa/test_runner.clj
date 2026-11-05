@@ -7,6 +7,7 @@
             [presa.auth-grants-test]
             [presa.auth-test]
             [presa.authoring-test]
+            [presa.bb-test]
             [presa.catalog-test]
             [presa.client-cache-test]
             [presa.client-test]
@@ -38,6 +39,7 @@
     presa.server-surface-test
     presa.authoring-test
     presa.part-test
+    presa.bb-test
     presa.schema-test
     presa.transport.stdio-test
     presa.transport.http-test
