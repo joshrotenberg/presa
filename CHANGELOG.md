@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.2](https://github.com/joshrotenberg/presa/compare/v0.1.1...v0.1.2) (2026-11-06)
+
+
+### Features
+
+* a Clojars MCP server example ([#65](https://github.com/joshrotenberg/presa/issues/65)) ([73df4bf](https://github.com/joshrotenberg/presa/commit/73df4bf519b8684404546da98fa4ea828b3505a9))
+* keyword schemas and keyword tool arguments ([#68](https://github.com/joshrotenberg/presa/issues/68)) ([c41347d](https://github.com/joshrotenberg/presa/commit/c41347dc3db2419c2f5d02f3b4d71ce514391f95))
+* presa.part and presa.bb, servers composed from parts ([#72](https://github.com/joshrotenberg/presa/issues/72)) ([ab05c87](https://github.com/joshrotenberg/presa/commit/ab05c87bfe3f2831f815e4ef21eb43afcf43cbe0))
+
 ## [0.1.1](https://github.com/joshrotenberg/presa/compare/v0.1.0...v0.1.1) (2026-11-04)
 
 
