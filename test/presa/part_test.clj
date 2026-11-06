@@ -1,5 +1,6 @@
 (ns presa.part-test
-  (:require [clojure.java.io :as io]
+  (:require [presa.server]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [presa.client :as client]

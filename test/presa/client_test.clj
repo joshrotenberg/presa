@@ -2,7 +2,6 @@
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [presa.client :as client]
-            [presa.content :as content]
             [presa.protocol :as protocol]
             [presa.server :as server]
             [presa.transport.stdio :as stdio]))

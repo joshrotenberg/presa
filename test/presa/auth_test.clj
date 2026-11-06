@@ -1,5 +1,6 @@
 (ns presa.auth-test
-  (:require [clojure.data.json :as json]
+  (:require [org.httpkit.server]
+            [clojure.data.json :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [presa.auth :as auth]

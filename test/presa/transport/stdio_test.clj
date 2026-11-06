@@ -106,10 +106,10 @@
           reader (java.io.InputStreamReader. pipe-in "UTF-8")
           out (java.io.StringWriter.)
           done (future (stdio/serve! srv {:in reader :out out :log (fn [& _])}) :done)]
-      (.write in (str (rpc/write-line (rpc/request 7 "tools/call" {"name" "block" "_meta" meta-2026}))))
+      (.write in (rpc/write-line (rpc/request 7 "tools/call" {"name" "block" "_meta" meta-2026})))
       (.flush in)
       (is (deref started 2000 false))
-      (.write in (str (rpc/write-line (rpc/notification "notifications/cancelled" {"requestId" 7 "reason" "user"}))))
+      (.write in (rpc/write-line (rpc/notification "notifications/cancelled" {"requestId" 7 "reason" "user"})))
       (.close in)
       (is (deref interrupted 2000 false))
       (is (= :done (deref done 2000 :timeout)))

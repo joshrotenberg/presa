@@ -94,7 +94,7 @@
   SubjectPublicKeyInfo. Used to publish keys and in tests."
   [k]
   (let [[_ spki] (der-read (.getEncoded k))
-        [_ alg-id bit-string-and-rest] (der-read spki)
+        [_ _alg-id bit-string-and-rest] (der-read spki)
         [_ bit-string] (der-read bit-string-and-rest)
         key-bytes (java.util.Arrays/copyOfRange bit-string 1 (alength bit-string))
         strip #(byte-array (drop-while zero? %))]

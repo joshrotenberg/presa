@@ -1,0 +1,6 @@
+;; clj-kondo configuration. bb lint (dev/lint.clj) runs clj-kondo through its pod.
+{:lint-as {presa.server/defalias clojure.core/def
+           presa.transport.http/defalias clojure.core/def
+           presa.transport.http-test/with-server clojure.core/let}
+ :linters {;; every lock is a shared object held in a session or state map
+           :locking-suspicious-lock {:level :off}}}

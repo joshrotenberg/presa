@@ -11,8 +11,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [presa.client :as client]
-            [presa.conformance.fixture :as fixture]
-            [presa.server :as server])
+            [presa.conformance.fixture :as fixture])
   (:import (com.networknt.schema InputFormat SchemaLocation SchemaRegistry SpecificationVersion)
            (java.util.function Consumer)))
 
@@ -117,7 +116,7 @@
    "roots/list" (fn [_] {"roots" [{"uri" "file:///work" "name" "work"}]})})
 
 (defn- exercise! [c]
-  (doseq [{:strs [name inputSchema]} (client/list-tools c)
+  (doseq [{:strs [name]} (client/list-tools c)
           :when (not (#{"test_missing_capability" "json_schema_2020_12_tool" "custom_header_region"} name))]
     (try (client/call-tool c name (case name
                                     "slow_compute" {"seconds" 0}

@@ -1,5 +1,6 @@
 (ns presa.proxy-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string]
+            [clojure.test :refer [deftest is testing]]
             [presa.client :as client]
             [presa.input :as input]
             [presa.protocol :as protocol]

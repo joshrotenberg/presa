@@ -1,6 +1,5 @@
 (ns presa.bb-test
-  (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing]]
             [presa.bb :as pb]
             [presa.client :as client]
             [presa.part :as part]))

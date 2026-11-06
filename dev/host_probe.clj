@@ -10,7 +10,8 @@
 ;; - legacy:    reject server/discover with -32601, answer initialize
 ;; - stateless: answer initialize with 2026-07-28
 ;; - reject:    reject initialize with -32601
-(require '[clojure.data.json :as json] '[clojure.java.io :as io])
+(ns host-probe
+  (:require [clojure.data.json :as json] [clojure.java.io :as io]))
 
 (def log-file (or (System/getenv "PROBE_LOG") "probe.log"))
 (def mode (or (System/getenv "PROBE_MODE") "echo"))
