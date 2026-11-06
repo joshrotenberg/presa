@@ -28,8 +28,9 @@ fails, then checks the conventions below:
 
 - `bb test`
 - `bb jvm-test`
+- `bb lint`
 
-CI runs those, `bb lint` (the conventions below, without cj), the jar
+CI runs those, `bb lint` (clj-kondo and the conventions below, without cj), the jar
 build, the server conformance lanes (`bb conformance <revision>`, each against
 `conformance/baselines/<revision>.json`) and the client lanes
 (`bb conformance client <revision>`, against `client-<revision>.json`); see
@@ -39,6 +40,12 @@ build, the server conformance lanes (`bb conformance <revision>`, each against
 
 The check enforces these:
 
+- clj-kondo finds no errors or warnings in `src`, `test`, `test-jvm`,
+  `examples`, `dev`, `conformance` and the build files. `bb lint` runs it
+  through its Babashka pod, so there is nothing to install. `.clj-kondo/config.edn`
+  holds the configuration: `defalias` and `with-server` are linted as `def` and
+  `let`, and `:locking-suspicious-lock` is off because every lock is a shared
+  object held in a session or state map.
 - Commit subjects in `origin/main..HEAD` use conventional-commit prefixes: `feat`,
   `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`,
   `revert`, with an optional scope and `!` (git's own `Revert "..."` subject

@@ -5,7 +5,6 @@
             [presa.jsonrpc :as rpc]
             [presa.protocol :as protocol]
             [presa.request-state :as request-state]
-            [presa.tasks :as tasks]
             [presa.server.core :refer [error now-ms]]
             [presa.server.catalog :refer [capabilities legacy-versions snapshot stateless-versions]]
             [presa.server.access :refer [match-template may-read? required-scopes]]

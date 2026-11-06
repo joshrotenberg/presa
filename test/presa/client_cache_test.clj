@@ -20,7 +20,7 @@
 (defn- text [c uri & [opts]] (get-in (client/read-resource c uri opts) [0 "text"]))
 
 (deftest results-are-kept-for-their-ttl
-  (let [[srv reads] (counting-server 60000)
+  (let [[srv _reads] (counting-server 60000)
         c (client/connect (client/in-process srv)
                           {:cache true :handlers {"elicitation/create" (fn [_] {"action" "accept" "content" {}})}})]
     (try

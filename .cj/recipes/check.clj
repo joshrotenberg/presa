@@ -8,6 +8,7 @@
 
   - :test       bb test
   - :jvm-test   bb jvm-test
+  - :lint       bb lint: clj-kondo, em dashes and commit messages
   - :em-dashes  no em dashes in tracked *.md *.clj *.edn *.json files, except
                  the vendored conformance/schema/
   - :commits    commits in origin/main..HEAD have conventional-commit subjects and no attribution lines (skipped when origin/main does not exist)
@@ -22,6 +23,7 @@
   [root]
   [[:test #(checks/command root ["bb" "test"] {:failures checks/clojure-test-failures})]
    [:jvm-test #(checks/command root ["bb" "jvm-test"] {:failures checks/clojure-test-failures})]
+   [:lint #(checks/command root ["bb" "lint"] {})]
    [:em-dashes #(checks/em-dashes root {:pathspecs ["*.md" "*.clj" "*.edn" "*.json"
                                                     ":(exclude)conformance/schema/**"]})]
    [:commits #(checks/commit-messages root {:base "origin/main"})]])

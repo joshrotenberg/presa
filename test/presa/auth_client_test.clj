@@ -33,13 +33,13 @@
   once), token (a signed JWT). iss-mode is :correct, :wrong or :omit;
   state-mode is :correct or :wrong (the state echoed on the redirect);
   methods is the advertised code_challenge_methods_supported."
-  [keypair resource {:keys [iss-mode state-mode methods] :or {iss-mode :correct state-mode :correct methods ["S256"]}}]
+  [keypair _resource {:keys [iss-mode state-mode methods] :or {iss-mode :correct state-mode :correct methods ["S256"]}}]
   (let [port (promise)
         seen (atom [])
         ;; the scope an authorization request asked for, for its token
         last-scope (atom nil)
         issuer #(str "http://127.0.0.1:" @port)
-        handler (fn [{:keys [uri request-method query-string body headers] :as req}]
+        handler (fn [{:keys [uri request-method query-string body]}]
                   (let [body (when body (slurp body))]
                     (swap! seen conj [request-method uri])
                     (case uri

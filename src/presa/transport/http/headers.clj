@@ -28,7 +28,7 @@
         ;; strict base64: padded, and only the base64 alphabet
         (when (and (zero? (mod (count b64) 4)) (re-matches #"[A-Za-z0-9+/]*={0,2}" b64))
         (try
-          (let [decoder (-> (java.nio.charset.StandardCharsets/UTF_8)
+          (let [decoder (-> java.nio.charset.StandardCharsets/UTF_8
                             (.newDecoder)
                             (.onMalformedInput java.nio.charset.CodingErrorAction/REPORT))]
             (str (.decode decoder (java.nio.ByteBuffer/wrap (.decode (Base64/getDecoder) ^String b64)))))

@@ -1,6 +1,9 @@
 ;; The repository conventions AGENTS.md lists, as cj run check checks them,
 ;; for CI and anyone without cj:
 ;;
+;; - clj-kondo (through its Babashka pod, configured in .clj-kondo/config.edn)
+;;   finds no errors or warnings in the Clojure sources; info findings are
+;;   printed as notes
 ;; - tracked *.md *.clj *.edn *.json files have no em dashes (vendored
 ;;   files under conformance/schema/ aside)
 ;; - commit subjects in <base>..HEAD (merge commits aside) use
@@ -11,10 +14,26 @@
 ;;   release-please's, is squash-merged) is not attribution and is allowed
 ;;
 ;;   bb lint [base]    (base defaults to origin/main; skipped when missing)
-(require '[babashka.process :as p]
-         '[clojure.string :as str])
+(ns lint
+  (:require [babashka.pods :as pods]
+            [babashka.process :as p]
+            [clojure.string :as str]))
 
 (defn- git [& args] (str/trim (:out (apply p/shell {:out :string :continue true} "git" args))))
+
+(def clj-kondo-version "2026.08.04")
+(def lint-paths ["src" "test" "test-jvm" "examples" "dev" "conformance" "bb.edn" "deps.edn" "build.clj"])
+
+(def kondo-findings
+  (do (pods/load-pod 'clj-kondo/clj-kondo clj-kondo-version)
+      (:findings ((requiring-resolve 'pod.borkdude.clj-kondo/run!) {:lint lint-paths :parallel true}))))
+
+(defn- finding [f] (str (:filename f) ":" (:row f) ": " (name (:type f)) ": " (:message f)))
+
+(def kondo-problems
+  (for [f kondo-findings :when (#{:error :warning} (:level f))] (finding f)))
+
+(doseq [f kondo-findings :when (= :info (:level f))] (println "note:" (finding f)))
 
 (def em-dash (str (char 0x2014)))
 
@@ -51,7 +70,7 @@
       problem)))
 
 (when-not base? (println "commit checks skipped:" base "does not name a commit"))
-(doseq [p (concat dash-problems commit-problems)] (println p))
-(if (seq (concat dash-problems commit-problems))
+(doseq [p (concat kondo-problems dash-problems commit-problems)] (println p))
+(if (seq (concat kondo-problems dash-problems commit-problems))
   (System/exit 1)
   (println "lint ok"))
