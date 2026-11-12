@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.5](https://github.com/joshrotenberg/presa/compare/v0.1.4...v0.1.5) (2026-11-12)
+
+
+### Features
+
+* a loopback-bound HTTP server accepts only loopback Host headers by default ([#146](https://github.com/joshrotenberg/presa/issues/146)) ([80f6a47](https://github.com/joshrotenberg/presa/commit/80f6a47c5141a176a3943cbc26f0d9461419cdb9))
+
+
+### Bug Fixes
+
+* close the remaining auth gaps from the survey ([#145](https://github.com/joshrotenberg/presa/issues/145)) ([8a4d716](https://github.com/joshrotenberg/presa/commit/8a4d716e9e8c40d9f3637054d971c20abdf37676))
+* internal errors no longer send exception messages to the client ([#142](https://github.com/joshrotenberg/presa/issues/142)) ([d39b6da](https://github.com/joshrotenberg/presa/commit/d39b6da22084bac4efc9cd73b0edd24d0863494a))
+* narrow concurrency and shutdown races in the server and connection ([#149](https://github.com/joshrotenberg/presa/issues/149)) ([0811817](https://github.com/joshrotenberg/presa/commit/0811817d040588a5f2bf4492defc5f4bf4d28cff))
+* SSE resumption, close and parsing leftovers in the HTTP transport ([#150](https://github.com/joshrotenberg/presa/issues/150)) ([c830a79](https://github.com/joshrotenberg/presa/commit/c830a795cab2d108659e43de624e1cd7429a9160))
+* the stdio client transport ends its server and the server's children ([#143](https://github.com/joshrotenberg/presa/issues/143)) ([87a9490](https://github.com/joshrotenberg/presa/commit/87a949015af515a21a07bd32fd781626ffa3a7f6))
+
 ## [0.1.4](https://github.com/joshrotenberg/presa/compare/v0.1.3...v0.1.4) (2026-11-12)
 
 
