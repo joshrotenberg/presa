@@ -68,9 +68,13 @@ Every request to the endpoint needs a token:
 `:verify` is a function of the token string that returns
 `{:subject :client-id :scopes :claims}`, or `{:error kind :description s}`.
 `presa.auth.jwt/verifier` checks JWS access tokens: RS256 and ES256 against
-a JWKS URL (`:jwks-url`, cached by `kid`) or static `:keys`, HS256 with a
-`:secret`; then `exp` and `nbf` (with `:leeway-s`), `:issuer` and
-`:audience`. Bring your own function for opaque tokens or introspection.
+a JWKS URL (`:jwks-url`) or static `:keys`, HS256 with a `:secret`; then
+`exp` and `nbf` (with `:leeway-s`), `:issuer` and `:audience`. The JWKS is
+cached by `kid` and fetched again for an unknown `kid` or once it is older
+than `:max-age-ms` (default an hour), one fetch at a time and at most once
+per `:refresh-ms`; a refetch drops keys the document no longer lists, and a
+failed one keeps the cached keys. Bring your own function for opaque tokens
+or introspection.
 
 ## The caller in handlers
 
@@ -87,6 +91,9 @@ subject that opened it.
 
 `presa.auth.jwt/verifier` requires `exp` in the tokens it accepts, as RFC
 9068 does for access tokens; `:require-exp? false` drops that.
+`:require-typ? true` also refuses a token whose header `typ` is not
+`at+jwt`, as RFC 9068 asks; it is off by default because some issuers put
+`typ: JWT` on their access tokens.
 
 ```clojure
 (def token (jwt/sign {"sub" "ada" "aud" resource "scope" "mcp:read"
