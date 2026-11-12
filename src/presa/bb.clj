@@ -108,14 +108,17 @@
   "The parts the project in dir offers from its bb.edn: when it has an mcp
   task, that server, run as a subprocess and proxied (its bb, deps and
   config stay its own); otherwise its tasks marked :mcp/tool. No bb.edn, no
-  parts. Options: :task (default \"mcp\"), :bb, and task-tools' :timeout-ms
-  and :max-chars."
+  parts. Options: :task (default \"mcp\"), :bb, :timeout-ms (a task tool's
+  limit, or a proxied call's), task-tools' :max-chars, and part/proxy's
+  :probe-timeout-ms."
   ([dir] (project-parts dir {}))
   ([dir {:keys [task bb] :or {task "mcp" bb "bb"} :as opts}]
    (let [f (.getCanonicalFile (io/file dir "bb.edn"))]
      (cond
        (not (.isFile f)) []
        (contains? (tasks-of f) (symbol task))
-       [(part/proxy [bb "--config" (str f) task] {:dir (str (.getParentFile f))})]
+       [(part/proxy [bb "--config" (str f) task]
+                    (assoc (select-keys opts [:timeout-ms :probe-timeout-ms])
+                           :dir (str (.getParentFile f))))]
        :else
        [(task-tools (assoc (select-keys opts [:bb :timeout-ms :max-chars]) :bb-edn (str f)))]))))
