@@ -500,3 +500,33 @@
                (HttpResponse$BodyHandlers/discarding))
         (is (= :closed (deref failed 2000 nil)) "the waiting request fails at once"))
       (finally ((:stop! s))))))
+
+(deftest a-stream-without-event-ids-is-not-resumed
+  ;; an initialize-era server whose tools/call stream ends with no response
+  ;; and no event ids; every GET is counted
+  (let [gets (atom 0)
+        json (fn [m & [headers]] {:status 200 :headers (merge {"content-type" "application/json"} headers) :body (json/write-str m)})
+        server (hk/run-server
+                (fn [req]
+                  (if (= :get (:request-method req))
+                    (do (swap! gets inc) {:status 405})
+                    (let [m (json/read-str (slurp (:body req)))]
+                      (case (get m "method")
+                        "initialize" (json {"jsonrpc" "2.0" "id" (get m "id")
+                                            "result" {"protocolVersion" "2025-06-18" "capabilities" {"tools" {}}
+                                                      "serverInfo" {"name" "stub" "version" "0"}}}
+                                           {"mcp-session-id" "s1"})
+                        "tools/list" (json {"jsonrpc" "2.0" "id" (get m "id")
+                                            "result" {"tools" [{"name" "x" "inputSchema" {"type" "object"}}]}})
+                        "tools/call" (hk/as-channel req {:on-open (fn [ch]
+                                                                    (hk/send! ch {:status 200 :headers {"content-type" "text/event-stream"}} false)
+                                                                    (hk/close ch))})
+                        {:status 202}))))
+                {:port 0 :ip "127.0.0.1" :legacy-return-value? false})
+        c (client/connect (http/url (str "http://127.0.0.1:" (hk/server-port server) "/mcp"))
+                          {:versions ["2025-06-18"] :timeout-ms 1500})]
+    (try
+      (is (thrown? Exception (client/call-tool c "x")))
+      (Thread/sleep 500)
+      (is (= 1 @gets) "only the session's own GET stream, no resume")
+      (finally (client/close c) @(hk/server-stop! server {:timeout 100})))))

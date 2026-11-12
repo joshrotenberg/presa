@@ -45,14 +45,23 @@
                              (when (some? v) [(str "mcp-param-" h) (encode-header-value v)]))))
                    (get @annotations (get params "name")))))))
 
+(def ^:private max-event-line-bytes
+  "The longest event stream line the client reads, as the stdio transport's
+  default message limit."
+  2000000)
+
 (defn- read-events
   "Call f with each message in an event stream, until it ends. Returns the
   stream's last event id and retry interval: {:last-event-id :retry-ms}."
   [^java.io.InputStream in f]
-  (with-open [r (io/reader in :encoding "UTF-8")]
+  (with-open [r (java.io.BufferedReader. (io/reader in :encoding "UTF-8"))]
     (loop [data [] seen {}]
-      (if-let [line (.readLine ^java.io.BufferedReader r)]
+      (if-let [line (rpc/read-line-limited r max-event-line-bytes)]
         (cond
+          ;; a peer cannot make the client hold an unbounded line
+          (= rpc/too-long line)
+          (throw (java.io.IOException. (str "An event stream line exceeds " max-event-line-bytes " bytes")))
+
           (str/blank? line)
           (do (when (seq data)
                 (when-let [m (try (rpc/parse-line (str/join "\n" data)) (catch Exception _ nil))]
@@ -60,7 +69,8 @@
               (recur [] seen))
 
           (str/starts-with? line "data:")
-          (recur (conj data (str/triml (subs line 5))) seen)
+          ;; the SSE spec drops one leading space
+          (recur (conj data (let [v (subs line 5)] (if (str/starts-with? v " ") (subs v 1) v))) seen)
 
           (str/starts-with? line "id:")
           (recur data (assoc seen :last-event-id (str/trim (subs line 3))))
@@ -297,7 +307,9 @@
                         (when-not (contains? @streams id) (throw e))
                         :presa.transport.http/cancelled)
                       (finally (when (some? id) (swap! streams dissoc id))))]
-        (when (and (some? id) (map? seen) (:session-id @state)
+        ;; resuming needs an event id to resume from; a server that sends
+        ;; none (presa's) would only see the session's GET stream replaced
+        (when (and (some? id) (map? seen) (:session-id @state) (:last-event-id seen)
                    (not (contains? @answered id)))
           (resume! conn id seen)))
 
@@ -450,10 +462,14 @@
 (defn- close!
   "Close the session stream, end an initialize-era session with DELETE, and
   tell the client. Only the first call does anything."
-  [{:keys [closed state ^HttpClient client uri token-provider endpoint on-close] :as conn}]
+  [{:keys [closed state streams ^HttpClient client uri token-provider endpoint on-close] :as conn}]
   (when (compare-and-set! closed false true)
     (when-let [^java.io.InputStream s (:session-stream @state)]
       (try (.close s) (catch Exception _)))
+    ;; requests still in flight: their exchanges and event streams end too
+    (doseq [{:keys [^java.io.InputStream body ^java.util.concurrent.Future pending]} (vals @streams)]
+      (some-> pending (.cancel true))
+      (when body (try (.close body) (catch Exception _))))
     (when-let [sid (:session-id @state)]
       (try
         (.send client (-> (HttpRequest/newBuilder uri)

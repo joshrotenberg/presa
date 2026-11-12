@@ -82,3 +82,30 @@
           (= -1 c) value
           (Character/isWhitespace (char c)) (recur)
           :else (throw (parse-error "More than one JSON value on the line" nil)))))))
+
+(def too-long
+  "What read-line-limited returns for a line past its limit."
+  ::too-long)
+
+(defn read-line-limited
+  "The next line of in without its line ending, `too-long` for a line past
+  max-bytes in UTF-8 (whose rest is skipped), or nil at the end of the
+  input. The stdio transports, and the HTTP client's event streams, read
+  with this, so a peer cannot make them hold an unbounded line."
+  [^java.io.BufferedReader in max-bytes]
+  (let [sb (StringBuilder.)]
+    (loop [too-long? false]
+      (let [c (.read in)]
+        (cond
+          (= -1 c) (cond too-long? too-long
+                         (pos? (.length sb)) (str sb)
+                         :else nil)
+          (= 10 c) (let [line (str sb)
+                         line (if (str/ends-with? line "\r") (subs line 0 (dec (count line))) line)]
+                     (if (or too-long? (> (inc (alength (.getBytes line "UTF-8"))) max-bytes))
+                       too-long
+                       line))
+          too-long? (recur true)
+          ;; a char is at least one byte, so past max-bytes chars is too long
+          (>= (.length sb) max-bytes) (do (.setLength sb 0) (recur true))
+          :else (do (.append sb (char c)) (recur false)))))))

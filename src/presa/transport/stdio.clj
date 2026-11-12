@@ -28,27 +28,6 @@
   "The default limit on one input message, counting its newline."
   2000000)
 
-(defn- read-line-limited
-  "The next line of in without its line ending, ::too-long for a line past
-  max-bytes (whose rest is skipped), or nil at the end of the input."
-  [^java.io.BufferedReader in max-bytes]
-  (let [sb (StringBuilder.)]
-    (loop [too-long? false]
-      (let [c (.read in)]
-        (cond
-          (= -1 c) (cond too-long? ::too-long
-                         (pos? (.length sb)) (str sb)
-                         :else nil)
-          (= 10 c) (let [line (str sb)
-                         line (if (str/ends-with? line "\r") (subs line 0 (dec (count line))) line)]
-                     (if (or too-long? (> (inc (alength (.getBytes line "UTF-8"))) max-bytes))
-                       ::too-long
-                       line))
-          too-long? (recur true)
-          ;; a char is at least one byte, so past max-bytes chars is too long
-          (>= (.length sb) max-bytes) (do (.setLength sb 0) (recur true))
-          :else (do (.append sb (char c)) (recur false)))))))
-
 (defn serve!
   "Serve srv, a presa.server/server map, until the input ends, then wait for
   requests in flight (see :drain-timeout-ms) and return. Options:
@@ -76,8 +55,8 @@
                       (.flush ^java.io.Writer out))))
          {:keys [receive! close!]} (connection/open srv {:send write! :log log :drain-timeout-ms drain-timeout-ms})]
      (loop []
-       (if-let [line (read-line-limited in max-line-bytes)]
-         (do (if (= ::too-long line)
+       (if-let [line (rpc/read-line-limited in max-line-bytes)]
+         (do (if (= rpc/too-long line)
                (do (log "refused a line longer than " max-line-bytes " bytes")
                    (write! (rpc/error nil :invalid-request
                                       (str "Message exceeds the " max-line-bytes "-byte line limit"))))
@@ -125,11 +104,14 @@
            reader (daemon
                    (fn []
                      (try
-                       (with-open [in (io/reader (.getInputStream process) :encoding "UTF-8")]
-                         (doseq [line (line-seq in)]
-                           (when-not (str/blank? line)
-                             (when-let [message (try (rpc/parse-line line) (catch Exception _ nil))]
-                               (try (on-message message) (catch Throwable _))))))
+                       (with-open [in (java.io.BufferedReader. (io/reader (.getInputStream process) :encoding "UTF-8"))]
+                         ;; a line past the limit is skipped, as the server side does
+                         (loop []
+                           (when-let [line (rpc/read-line-limited in default-max-line-bytes)]
+                             (when-not (or (= rpc/too-long line) (str/blank? line))
+                               (when-let [message (try (rpc/parse-line line) (catch Exception _ nil))]
+                                 (try (on-message message) (catch Throwable _))))
+                             (recur))))
                        (catch Exception _)
                        (finally
                          (reset! closed true)
