@@ -163,3 +163,22 @@
             (is (= 200 (:status r)))
             (is (= "x" (get-in (json/read-str (:body r)) ["result" "tools" 0 "name"]))))))
       (finally (stop!)))))
+
+(deftest per-request-caps-are-configurable
+  (let [counting {:name "count"
+                  :handler (fn [_ ctx]
+                             (str (count (filter true? (map #(server/progress! ctx %) (range 1 1101))))
+                                  " "
+                                  (count (filter true? (map (fn [_] (server/log! ctx "info" "x")) (range 1100))))))}
+        run (fn [opts]
+              (let [srv (server/server (merge {:name "t" :version "1" :logging true :tools [counting]} opts))]
+                (get-in (second (server/handle srv {} (rpc/request 1 "tools/call"
+                                                                   {"name" "count"
+                                                                    "_meta" {"io.modelcontextprotocol/protocolVersion" "2026-07-28"
+                                                                             "io.modelcontextprotocol/clientCapabilities" {}
+                                                                             "io.modelcontextprotocol/logLevel" "info"
+                                                                             "progressToken" "p"}})))
+                        ["result" "content" 0 "text"])))]
+    (is (= "1000 1000" (run {})) "the defaults")
+    (is (= "2 3" (run {:max-progress-updates 2 :max-log-messages 3})))
+    (is (= "1100 1100" (run {:max-progress-updates nil :max-log-messages nil})) "nil is no cap")))
