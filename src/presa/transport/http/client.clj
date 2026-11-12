@@ -98,7 +98,8 @@
 ;;               request in flight; cancelling the exchange, or closing the
 ;;               body of its JSON or event-stream response, cancels it
 ;; :closed       true once close! has run
-;; :answered     ids of the responses delivered, to tell a stream that
+;; :answered     ids of the responses delivered to requests still being
+;;               posted (removed when the post ends), to tell a stream that
 ;;               ended before its response from one that carried it
 
 (defn- with-headers
@@ -376,12 +377,14 @@
 (defn- post
   "Post message and deliver what comes back; its streams entry goes when it
   is done."
-  [{:keys [streams] :as conn} message]
+  [{:keys [streams answered] :as conn} message]
   (try
     (post* conn message)
     (finally
       (when (and (contains? message "method") (some? (get message "id")))
-        (swap! streams dissoc (get message "id"))))))
+        (swap! streams dissoc (get message "id"))
+        ;; delivered or not, the request is done: forget its id
+        (swap! answered disj (get message "id"))))))
 
 (defn- list-tools!
   "Learn the tools' x-mcp-header annotations before calling one this
