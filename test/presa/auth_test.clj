@@ -7,6 +7,7 @@
             [presa.auth.jwt :as jwt]
             [presa.client :as client]
             [presa.input :as input]
+            [presa.protocol :as protocol]
             [presa.server :as server]
             [presa.transport.http :as http])
   (:import (java.net URI)
@@ -331,3 +332,28 @@
         (is (= [200 ""] [(:status head-r) (:body head-r)]))
         (is (= 405 (:status post-r)))
         (is (= "GET, HEAD" (get-in post-r [:headers "allow"])))))))
+
+(deftest sessions-are-capped-per-subject
+  (let [rsa (rsa-pair)
+        srv (server/server {:name "t" :version "1" :versions protocol/versions
+                            :tools [{:name "echo" :handler (fn [_ _] "x")}]})
+        probe (http/serve! srv)
+        port (:port probe)
+        _ ((:stop! probe))
+        resource (str "http://127.0.0.1:" port "/mcp")
+        config (auth/resource-server {:resource resource
+                                      :verify (jwt/verifier {:audience resource :keys {"k" (.getPublic rsa)}})
+                                      :authorization-servers ["https://auth.example.com"]})
+        {:keys [url stop!]} (http/serve! srv {:port port :auth config :max-sessions-per-subject 2})
+        init (fn [sub]
+               (:status (http-send url "POST"
+                                   {"content-type" "application/json" "accept" "application/json, text/event-stream"
+                                    "authorization" (str "Bearer " (jwt/sign {"sub" sub "aud" resource "exp" (+ now 600)}
+                                                                             {:alg "RS256" :kid "k" :key (.getPrivate rsa)}))}
+                                   (json/write-str {"jsonrpc" "2.0" "id" 0 "method" "initialize"
+                                                    "params" {"protocolVersion" "2025-06-18" "capabilities" {}
+                                                              "clientInfo" {"name" "c" "version" "0"}}}))))]
+    (try
+      (is (= [200 200 503] [(init "ada") (init "ada") (init "ada")]) "a third session for ada is refused")
+      (is (= 200 (init "bob")) "another subject is not affected")
+      (finally (stop!)))))
