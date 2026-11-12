@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/joshrotenberg/presa/compare/v0.1.5...v0.1.6) (2026-11-12)
+
+
+### Bug Fixes
+
+* proxy-server returns once it follows each backend ([#151](https://github.com/joshrotenberg/presa/issues/151)) ([6b2c2fa](https://github.com/joshrotenberg/presa/commit/6b2c2fa9835fc8eeed3f52cc2f7fb7c28ce00d15))
+
 ## [0.1.5](https://github.com/joshrotenberg/presa/compare/v0.1.4...v0.1.5) (2026-11-12)
 
 
