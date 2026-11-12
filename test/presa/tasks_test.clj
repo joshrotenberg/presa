@@ -238,3 +238,22 @@
     (wait-status srv id "input_required")
     (result srv "tasks/update" {"taskId" id "inputResponses" {"q" {"action" "accept" "content" {}}}} declared)
     (is (= "[{\"step\" 1} (\"q\")]" (get-in (wait-status srv id "completed") ["result" "content" 0 "text"])))))
+
+(deftest finished-tasks-are-bounded
+  (testing ":max-finished keeps the newest finished tasks"
+    (let [srv (make-server {:tasks {:ttl-ms 60000 :poll-interval-ms 20 :max-finished 2}})
+          ids (vec (for [_ (range 5)]
+                     (let [id (get (result srv "tools/call" {"name" "slow"} declared) "taskId")]
+                       (wait-status srv id "completed")
+                       (Thread/sleep 5)
+                       id)))]
+      ;; a read reaps
+      (result srv "tasks/get" {"taskId" (peek ids)} declared)
+      (is (= (set (take-last 2 ids)) (set (keys @(:tasks (:task-store srv))))))))
+  (testing "an expired task is reaped on a read, with no task created"
+    (let [srv (make-server {:tasks {:ttl-ms 100 :poll-interval-ms 20}})
+          id (get (result srv "tools/call" {"name" "slow"} declared) "taskId")]
+      (wait-status srv id "completed")
+      (Thread/sleep 200)
+      (result srv "tasks/get" {"taskId" "unknown"} declared)
+      (is (= 0 (count @(:tasks (:task-store srv))))))))
