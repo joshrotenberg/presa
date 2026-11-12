@@ -36,14 +36,18 @@
                            (.redirectInput (java.lang.ProcessBuilder$Redirect/from (io/file "/dev/null")))
                            (.redirectOutput out-file)
                            (.redirectError err-file)))
-            done? (.waitFor proc timeout-ms unit)
+            ;; descendants first: once bb is gone they are reparented
+            kill! (fn []
+                    (run! #(.destroy ^java.lang.ProcessHandle %) (iterator-seq (.iterator (.descendants proc))))
+                    (.destroy proc)
+                    (when-not (.waitFor proc 2000 unit) (.destroyForcibly proc)))
+            done? (try (.waitFor proc timeout-ms unit)
+                       ;; the call was cancelled
+                       (catch InterruptedException e (kill!) (throw e)))
             cap (fn [s] (if (> (count s) max-chars)
                           (str (subs s 0 max-chars) "\n[... " (- (count s) max-chars) " more characters]")
                           s))]
-        (when-not done?
-          (run! #(.destroy ^java.lang.ProcessHandle %) (iterator-seq (.iterator (.descendants proc))))
-          (.destroy proc)
-          (when-not (.waitFor proc 2000 unit) (.destroyForcibly proc)))
+        (when-not done? (kill!))
         {:exit (when done? (.exitValue proc))
          :timed-out? (not done?)
          :out (cap (slurp out-file))

@@ -37,6 +37,26 @@
             (is (re-find #"timed out" (client/text r))))))
       (.delete f))))
 
+(deftest a-cancelled-call-ends-the-task
+  (let [f (java.io.File/createTempFile "presa-bb" ".edn")
+        pid-file (java.io.File/createTempFile "presa-bb" ".pid")]
+    (spit f (pr-str '{:tasks {sleepy {:mcp/tool true
+                                      :task (do (spit (first *command-line-args*) (.pid (java.lang.ProcessHandle/current)))
+                                                (Thread/sleep 30000))}}}))
+    (.delete pid-file)
+    (try
+      (part/with-client {:parts [(pb/task-tools {:bb-edn (.getPath f)})]}
+        (fn [c]
+          ;; the client gives up after 2 s and cancels the call
+          (is (thrown? Exception (client/call-tool c "sleepy" {"args" [(.getPath pid-file)]} {:timeout-ms 2000})))
+          (let [pid (parse-long (slurp pid-file))
+                alive? #(.orElse (.map (java.lang.ProcessHandle/of pid) (reify java.util.function.Function (apply [_ h] (.isAlive ^java.lang.ProcessHandle h)))) false)]
+            (is (loop [n 0] (cond (not (alive?)) true
+                                  (> n 50) false
+                                  :else (do (Thread/sleep 100) (recur (inc n)))))
+                "the task's bb process is gone"))))
+      (finally (.delete f) (.delete pid-file)))))
+
 (deftest what-a-project-offers
   (is (= [] (pb/project-parts (System/getProperty "java.io.tmpdir"))) "no bb.edn, no parts")
   (is (= ["greet" "test_unit"]
