@@ -51,7 +51,7 @@
 
 (def version
   "presa's version, which a client reports in its default :client-info."
-  "0.1.2") ; x-release-please-version
+  "0.1.3") ; x-release-please-version
 
 (defn- protocol-error [{:strs [code message data]}]
   (ex-info (str "MCP error " code ": " message)

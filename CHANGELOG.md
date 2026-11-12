@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.3](https://github.com/joshrotenberg/presa/compare/v0.1.2...v0.1.3) (2026-11-12)
+
+
+### Features
+
+* cancel stdio requests in flight after :drain-timeout-ms once stdin closes ([#113](https://github.com/joshrotenberg/presa/issues/113)) ([95e10ec](https://github.com/joshrotenberg/presa/commit/95e10eca9162a587a4ebca779fb856ef2fc13491))
+
+
+### Bug Fixes
+
+* a malformed percent-encoded resource URI is not found, not an internal error ([#117](https://github.com/joshrotenberg/presa/issues/117)) ([f909c5b](https://github.com/joshrotenberg/presa/commit/f909c5b75c41c363561c774eb136a43c0796d4d8))
+* a second initialize drops the replaced session's listeners ([#120](https://github.com/joshrotenberg/presa/issues/120)) ([fb35f05](https://github.com/joshrotenberg/presa/commit/fb35f054f518f90c83e97bdd7bb118bdc6728ae2))
+* advertise list changes for kinds a :list-changed server starts without ([#107](https://github.com/joshrotenberg/presa/issues/107)) ([599e9f0](https://github.com/joshrotenberg/presa/commit/599e9f029bf6dba5db37ff3ea691f52a96ce89a7))
+* answer a request whose handler throws an Error or whose result cannot be written ([#106](https://github.com/joshrotenberg/presa/issues/106)) ([6d1d900](https://github.com/joshrotenberg/presa/commit/6d1d9005a3f6708a9ca0cae8b5ac352704059650))
+* destroy a bb task's processes when its tool call is cancelled ([#109](https://github.com/joshrotenberg/presa/issues/109)) ([d312cee](https://github.com/joshrotenberg/presa/commit/d312ceef1704b9bb16be8b9c4c66bd5c62b9adc1))
+* evict idle initialize-era HTTP sessions and cap their number ([#78](https://github.com/joshrotenberg/presa/issues/78)) ([52b5c7b](https://github.com/joshrotenberg/presa/commit/52b5c7b62c4c2018bad10b1dd2f16b2705d86b19))
+* JWKS fetches once at a time, drops removed keys, and typ can be required ([#111](https://github.com/joshrotenberg/presa/issues/111)) ([8abcf14](https://github.com/joshrotenberg/presa/commit/8abcf14c5df3c65af40a371e3452654894c4edff))
+* let a cancel abort an HTTP client request waiting on a JSON response ([#115](https://github.com/joshrotenberg/presa/issues/115)) ([3dfe70d](https://github.com/joshrotenberg/presa/commit/3dfe70dbeff4bedf870a27f9b83b0517736a0f0d))
+* part/proxy lists by capability, forwards progress, takes timeouts ([#110](https://github.com/joshrotenberg/presa/issues/110)) ([2441d63](https://github.com/joshrotenberg/presa/commit/2441d63346f0b741b7e7d3025da4fd1437f8e984))
+* part/serve! closes its parts when the process is signalled ([#112](https://github.com/joshrotenberg/presa/issues/112)) ([e6abfb1](https://github.com/joshrotenberg/presa/commit/e6abfb1b79b7fc35f7b66c0b1e0f6adf0ec84028))
+* pass bb task tool args when the server keywordizes arguments ([#74](https://github.com/joshrotenberg/presa/issues/74)) ([3ad6053](https://github.com/joshrotenberg/presa/commit/3ad60535753d5aef0374eb6d75ea360bcefbe891))
+* proxy resyncs run one at a time per backend and keep names unique ([#122](https://github.com/joshrotenberg/presa/issues/122)) ([75f8a92](https://github.com/joshrotenberg/presa/commit/75f8a92f72d87d15194ef09ba7abad7ae433a91a))
+* register an HTTP request as running before its work starts ([#80](https://github.com/joshrotenberg/presa/issues/80)) ([77e414f](https://github.com/joshrotenberg/presa/commit/77e414fdeda5627c21b22158faa3401b8ee755b1))
+* release a task's thread when its TTL passes ([#114](https://github.com/joshrotenberg/presa/issues/114)) ([6581711](https://github.com/joshrotenberg/presa/commit/6581711227e27606eaa1d92cb361e2ffeeb01533))
+* renew an initialize-era HTTP session the server no longer knows ([#79](https://github.com/joshrotenberg/presa/issues/79)) ([4e4e26d](https://github.com/joshrotenberg/presa/commit/4e4e26d5a20b91bc18f71689e710af16bdfc58d1))
+* stop leaking a thread per HTTP request ([#77](https://github.com/joshrotenberg/presa/issues/77)) ([22e23df](https://github.com/joshrotenberg/presa/commit/22e23dfdcaac0fe2946779a92a8cef15061c0f38))
+* the HTTP client transport forgets a request's answered id when it is done ([#119](https://github.com/joshrotenberg/presa/issues/119)) ([acd2cff](https://github.com/joshrotenberg/presa/commit/acd2cff17471dc0aeba531132a814eda9002245a))
+* the OAuth client requires advertised PKCE support and HTTPS endpoints ([#116](https://github.com/joshrotenberg/presa/issues/116)) ([81e18a8](https://github.com/joshrotenberg/presa/commit/81e18a833b91ebc406928decff33e7413e03621e))
+* validate and send tool results with keyword keys as their JSON form ([#108](https://github.com/joshrotenberg/presa/issues/108)) ([7031a2a](https://github.com/joshrotenberg/presa/commit/7031a2a3082ca6705f6a94f434f13564fffa6162))
+
 ## [0.1.2](https://github.com/joshrotenberg/presa/compare/v0.1.1...v0.1.2) (2026-11-06)
 
 
