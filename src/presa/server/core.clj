@@ -2,6 +2,7 @@
   "Internal to presa.server; not part of the API. Errors, results and the
   markers handlers return, events, and what a handler sends the client."
   (:require [clojure.data.json :as json]
+            [clojure.walk :as walk]
             [presa.content :as content]
             [presa.input :as input]
             [presa.jsonrpc :as rpc]
@@ -55,12 +56,14 @@
 (defn tool-result
   "A handler's return value as a tools/call result. A string becomes text, a
   map with \"content\" is a result already, any other map is structured
-  content, nil is an empty result, and anything else becomes JSON text."
+  content, nil is an empty result, and anything else becomes JSON text. A
+  map's keyword keys become strings first, as the JSON writer would write
+  them, so an output schema checks what is sent."
   [v]
   (cond
+    (map? v) (let [v (walk/stringify-keys v)]
+               (if (contains? v "content") (merge {"isError" false} v) (structured v)))
     (string? v) (text v)
-    (and (map? v) (contains? v "content")) (merge {"isError" false} v)
-    (map? v) (structured v)
     (nil? v) {"content" [] "isError" false}
     :else (text (json-text v))))
 

@@ -204,3 +204,18 @@
     (testing "2026-07-28 clients see every tool"
       (is (= ["plain" "list-out" "union-in"]
              (map #(get % "name") (get-in (respond srv (req 3 "tools/list")) ["result" "tools"])))))))
+
+(deftest results-with-keyword-keys
+  (let [schema {:type :object :properties {:count {:type :integer}} :required [:count]}
+        srv (server/server
+             {:name "t" :version "1"
+              :tools [{:name "count" :output-schema schema :handler (fn [_ _] {:count 3})}
+                      {:name "built" :output-schema schema :handler (fn [_ _] (server/structured {:count 4}))}
+                      {:name "ready" :handler (fn [_ _] {:content [{:type "text" :text "done"}]})}]})
+        call (fn [tool] (get (respond srv (req 1 "tools/call" {"name" tool})) "result"))]
+    (testing "the output schema checks the result as it is sent"
+      (is (= {"count" 3} (get (call "count") "structuredContent")))
+      (is (= {"count" 4} (get (call "built") "structuredContent"))))
+    (testing "a keyword :content map is a result already"
+      (is (= [{"type" "text" "text" "done"}] (get (call "ready") "content")))
+      (is (not (contains? (call "ready") "structuredContent"))))))
