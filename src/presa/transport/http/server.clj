@@ -242,8 +242,7 @@
                                     ;; the request can still be answered
                                     (log "failed to write a response: " (ex-message e))
                                     (reply (rpc/error (get response "id") :internal-error
-                                                      (str "Internal error: the response could not be written: "
-                                                           (ex-message e)))))))))
+                                                      (if (:expose-errors? srv) (str "Internal error: the response could not be written: " (ex-message e)) "Internal error"))))))))
                        (catch Throwable e
                          (log "failed to answer a request: " (ex-message e))
                          (try (hk/close ch) (catch Throwable _)))

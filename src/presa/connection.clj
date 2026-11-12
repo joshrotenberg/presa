@@ -94,8 +94,7 @@
                                                  ;; the writer fails before writing anything,
                                                  ;; so the request can still be answered
                                                    (send (rpc/error request-id :internal-error
-                                                                    (str "Internal error: the response could not be written: "
-                                                                         (ex-message e)))))))
+                                                                    (if (:expose-errors? srv) (str "Internal error: the response could not be written: " (ex-message e)) "Internal error"))))))
                                           (catch Throwable e
                                             (log "failed to send a response: " (ex-message e)))
                                           (finally

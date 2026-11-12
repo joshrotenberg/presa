@@ -226,3 +226,16 @@
                                                   :handler (fn [{:strs [name]} _] (str "file " name))}]})]
     (is (= "file a b" (get-in (respond srv (req 1 "resources/read" {"uri" "file:///a%20b"})) ["result" "contents" 0 "text"])))
     (is (= -32602 (get-in (respond srv (req 2 "resources/read" {"uri" "file:///%zz"})) ["error" "code"])))))
+
+(deftest internal-errors-keep-their-message-to-themselves
+  (let [events (atom [])
+        opts {:name "t" :version "1" :on-event #(swap! events conj %)
+              :resources [{:uri "x:/db" :name "db" :handler (fn [_] (throw (ex-info "SELECT * FROM secrets failed" {})))}]}
+        read-db (fn [srv] (get (respond srv (req 1 "resources/read" {"uri" "x:/db"})) "error"))]
+    (is (= {"code" -32603 "message" "Internal error"} (read-db (server/server opts))))
+    (is (= "SELECT * FROM secrets failed"
+           (some #(when (= :request/error (:event %)) (ex-message (:exception %))) @events))
+        ":on-event gets the exception")
+    (is (= "Internal error: SELECT * FROM secrets failed"
+           (get (read-db (server/server (assoc opts :expose-errors? true))) "message"))
+        ":expose-errors? keeps it, for development")))

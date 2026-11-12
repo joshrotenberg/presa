@@ -68,7 +68,7 @@
       (is (some #(re-find #"failed to send a response" %) log)))
     (testing "another handler's Error is an internal error"
       (is (= -32603 (get-in by-id [3 "error" "code"])))
-      (is (re-find #"deep" (get-in by-id [3 "error" "message"]))))))
+      (is (= "Internal error" (get-in by-id [3 "error" "message"])) "without the exception's message"))))
 
 (deftest requests-in-flight-are-cancelled-after-the-drain-timeout
   (let [interrupted (promise)
