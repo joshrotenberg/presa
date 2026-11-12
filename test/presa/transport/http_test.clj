@@ -337,7 +337,7 @@
             closes (atom 0)
             server (hk/run-server
                     (fn [req]
-                      (let [body (slurp (:body req))]
+                      (let [body (str (some-> (:body req) slurp))]
                         (if (str/includes? body "\"stall\"")
                           (hk/as-channel req {:on-open stall :on-close (fn [_ _] (swap! closes inc))})
                           (inner (assoc req :body (java.io.ByteArrayInputStream. (.getBytes body "UTF-8")))))))
@@ -508,8 +508,9 @@
         json (fn [m & [headers]] {:status 200 :headers (merge {"content-type" "application/json"} headers) :body (json/write-str m)})
         server (hk/run-server
                 (fn [req]
-                  (if (= :get (:request-method req))
-                    (do (swap! gets inc) {:status 405})
+                  (case (:request-method req)
+                    :get (do (swap! gets inc) {:status 405})
+                    :delete {:status 204}
                     (let [m (json/read-str (slurp (:body req)))]
                       (case (get m "method")
                         "initialize" (json {"jsonrpc" "2.0" "id" (get m "id")

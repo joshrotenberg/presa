@@ -233,10 +233,7 @@
         c (client/connect (client/in-process server))
         eventually (fn [f] (loop [n 0] (cond (f) true (> n 100) false :else (do (Thread/sleep 20) (recur (inc n))))))]
     (try
-      ;; the proxy follows b once its subscription is acknowledged: a change
-      ;; that shows up proves it, so the next one is not missed
-      (server/add-tool! b {:name "z" :handler (fn [_ _] "z")})
-      (is (eventually #(some (fn [t] (= "p_z" (get t "name"))) (client/list-tools c))))
+      ;; proxy-server returns once it follows each backend, so this change is seen
       (testing "a name another backend has is skipped and logged"
         (server/add-tool! b {:name "x" :handler (fn [_ _] "b's x")})
         (is (eventually #(some (fn [l] (clojure.string/includes? l "p_x")) @logs)) (str @logs))
@@ -245,3 +242,11 @@
         (dotimes [i 20] (server/add-tool! a {:name (str "t" i) :handler (fn [_ _] "t")}))
         (is (eventually #(= 20 (count (filter (fn [t] (re-matches #"p_t\d+" (get t "name"))) (client/list-tools c)))))))
       (finally (client/close c) (close!)))))
+
+(deftest proxy-server-returns-once-it-follows-its-backends
+  (dotimes [_ 5]
+    (let [b (server/server {:name "b" :version "1" :list-changed true :tools [{:name "y" :handler (fn [_ _] "y")}]})
+          {:keys [close!]} (proxy/proxy-server [{:prefix "p" :client (connect b)}] {:name "front" :version "1"})]
+      (try
+        (is (some :stop (vals @(:listeners b))) "the backend has the proxy's subscription when proxy-server returns")
+        (finally (close!))))))

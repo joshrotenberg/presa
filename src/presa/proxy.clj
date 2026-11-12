@@ -361,15 +361,22 @@
                                     (resync! b)
                                     (let [[before _] (swap-vals! st {:dirty :running :running :idle})]
                                       (when (= :dirty before) (recur))))))))
-          listeners (vec (for [{:keys [client] :as b} backends
-                               :let [caps (:server-capabilities (client/info client))]
-                               :when (and (= "2026-07-28" (:version (client/info client)))
-                                          (some #(get-in caps [% "listChanged"]) ["tools" "prompts" "resources"]))]
-                           (client/listen client
-                                          {"toolsListChanged" true "promptsListChanged" true "resourcesListChanged" true}
-                                          (fn [{:strs [method]}]
-                                            (when (re-find #"/list_changed$" (str method))
-                                              (request-resync! b))))))]
+          followed (vec (for [{:keys [client] :as b} backends
+                              :let [caps (:server-capabilities (client/info client))]
+                              :when (and (= "2026-07-28" (:version (client/info client)))
+                                         (some #(get-in caps [% "listChanged"]) ["tools" "prompts" "resources"]))]
+                          [b (client/listen client
+                                            {"toolsListChanged" true "promptsListChanged" true "resourcesListChanged" true}
+                                            (fn [{:strs [method]}]
+                                              (when (re-find #"/list_changed$" (str method))
+                                                (request-resync! b))))]))
+          listeners (mapv second followed)]
+      ;; Return once each backend has acknowledged its subscription: a change
+      ;; before that would not be announced. A change between listing the
+      ;; backend and the acknowledgement is caught by one resync.
+      (doseq [[b l] followed]
+        (when (deref (:acknowledged l) 5000 nil)
+          (request-resync! b)))
       {:server srv
        :close! (fn []
                  (doseq [l listeners] ((:stop! l)))
