@@ -1,0 +1,5 @@
+# Formatting-only commits, skipped by git blame (GitHub reads this file;
+# locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+
+# style: format with cljfmt, and check it in bb lint (#132)
+90685ee8c50b207f98100d6b47d173901f2b609a
