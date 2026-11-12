@@ -50,6 +50,52 @@
                  (fn [c] [(part/call c "echo" {"text" "hi"}) (part/call c "x")])))))
       (finally ((:close! p))))))
 
+(defn- backend
+  "A command serving a presa server built from the server-map form, over
+  stdio, from this repository's sources."
+  [server-map]
+  ["bb" "--config" (.getCanonicalPath (io/file "bb.edn")) "-e"
+   (pr-str (list 'do
+                 '(require (quote [presa.server :as s]) (quote [presa.transport.stdio :as stdio]))
+                 (list 'stdio/serve! (list 's/server server-map))))])
+
+(deftest proxying-a-backend-without-tools
+  (let [p (part/proxy (backend '{:name "b" :version "1" :resources [{:uri "x:/a" :name "a" :handler (fn [_] "A")}]})
+                      {:stderr (fn [_])})]
+    (try
+      (is (= [] (:tools p)))
+      (is (= ["x:/a"] (map :uri (:resources p))))
+      (finally ((:close! p))))))
+
+(def ^:private slow-backend
+  (backend '{:name "b" :version "1"
+             :tools [{:name "slow"
+                      :handler (fn [_ ctx]
+                                 (s/progress! ctx 1 {:total 2})
+                                 (Thread/sleep 1500)
+                                 (s/progress! ctx 2 {:total 2})
+                                 "done")}]}))
+
+(deftest proxied-calls-forward-progress-and-take-a-timeout
+  (testing "progress reaches the front's caller"
+    (let [p (part/proxy slow-backend {:stderr (fn [_])})
+          progress (atom [])]
+      (try
+        (part/with-client {:parts [(dissoc p :close!)]}
+          (fn [c]
+            (is (= "done" (client/text (client/call-tool c "slow" {} {:on-progress #(swap! progress conj (get % "progress"))}))))))
+        (is (= [1 2] @progress))
+        (finally ((:close! p))))))
+  (testing ":timeout-ms bounds a forwarded call"
+    (let [p (part/proxy slow-backend {:stderr (fn [_]) :timeout-ms 500})]
+      (try
+        (part/with-client {:parts [(dissoc p :close!)]}
+          (fn [c]
+            (let [r (client/call-tool c "slow")]
+              (is (true? (get r "isError")))
+              (is (re-find #"timed out" (client/text r))))))
+        (finally ((:close! p)))))))
+
 (deftest duplicates
   (let [a {:tools [(tool "a" "A")] :resources [{:uri "x:/r" :name "r" :handler (fn [_] "")}]}]
     (is (thrown-with-msg? Exception #"Duplicate tool a" (part/combine [a {:tools [(tool "a" "B")]}])))

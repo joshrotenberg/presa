@@ -87,9 +87,10 @@ earlier parts take precedence; `serve!` logs what was shadowed.
 
 ## Another server as a part
 
-`proxy` starts an MCP server over stdio and returns a part of its tools and
-resources, each call forwarded to it; its `:close!` ends the connection and
-the process. A server can front another one and keep its own tools first:
+`proxy` starts an MCP server over stdio and returns a part of the tools and
+resources it advertises, each call forwarded to it with its progress and log
+messages; its `:close!` ends the connection and the process. A forwarded
+call may take `:timeout-ms` (default 600000, as a bb task tool). A server can front another one and keep its own tools first:
 
 <!-- no-run -->
 ```clojure
