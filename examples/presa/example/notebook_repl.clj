@@ -127,5 +127,4 @@
 
   ((:stop! sub))
   (client/close plain)
-  (client/close c)
-  )
+  (client/close c))

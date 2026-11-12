@@ -336,10 +336,10 @@
     (check-unique! :resources (map :uri (all :resources)))
     (check-unique! :resource-templates (map :uri-template (all :templates)))
     (let [srv (server/server (merge {:logging true} opts {:list-changed true
-                                          :tools (vec (all :tools))
-                                          :prompts (vec (all :prompts))
-                                          :resources (vec (all :resources))
-                                          :resource-templates (vec (all :templates))}))
+                                                          :tools (vec (all :tools))
+                                                          :prompts (vec (all :prompts))
+                                                          :resources (vec (all :resources))
+                                                          :resource-templates (vec (all :templates))}))
           resync! (fn [b]
                     (try (let [i (::index b)
                                now (without-taken (catalog b) (vals (dissoc @catalogs i)) log)]

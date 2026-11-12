@@ -475,7 +475,7 @@
                      (or (check-stateless-headers req message)
                          (when (= "tools/call" method) (check-param-headers srv req message))
                          (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)
-                                                  :running (stateless-key message)}))
+                                                   :running (stateless-key message)}))
 
                      (and (= "initialize" method)
                           (do (sweep! srv sessions session-idle-ms)
@@ -509,13 +509,13 @@
                          (json-response 400 (rpc/error (get message "id") :invalid-request
                                                        "MCP-Protocol-Version does not match the session"))
                          (execute srv req message {:session session :log log :keepalive-ms keepalive-ms :identity (caller)
-                                                  :running [(:running session) (get message "id")]})))
+                                                   :running [(:running session) (get message "id")]})))
 
                      ;; no _meta version and no session: let the server say
                      ;; what is missing
                      :else
                      (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)
-                                                  :running (stateless-key message)}))))))))))))
+                                               :running (stateless-key message)}))))))))))))
 
 (defn serve!
   "Serve srv over HTTP. Options are `handler`'s plus :host (default

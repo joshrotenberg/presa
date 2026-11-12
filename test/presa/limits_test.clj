@@ -18,7 +18,7 @@
   (let [srv (server/server {:name "t" :version "1" :tools [{:name "x" :handler (fn [_ _] "x")}]})
         ok (str/trim-newline (rpc/write-line (rpc/request 1 "tools/list" {"_meta" meta-2026})))
         huge (str/trim-newline (rpc/write-line (rpc/request 2 "tools/call" {"name" "x" "arguments" {"pad" (apply str (repeat 500 "a"))}
-                                                                             "_meta" meta-2026})))
+                                                                            "_meta" meta-2026})))
         out (java.io.StringWriter.)]
     (stdio/serve! srv {:in (java.io.StringReader. (str huge "\n" ok "\n")) :out out :log (fn [& _]) :max-line-bytes 300})
     (let [[refused listed] (map rpc/parse-line (str/split-lines (str out)))]
@@ -115,7 +115,7 @@
   (let [srv (server/server {:name "t" :version "1" :tools [{:name "x" :handler (fn [_ _] "x")}]})
         ok (str/trim-newline (rpc/write-line (rpc/request 1 "tools/list" {"_meta" meta-2026})))
         wide (str/trim-newline (rpc/write-line (rpc/request 2 "tools/call" {"name" "x" "arguments" {"pad" (apply str (repeat 100 "\u00e9"))}
-                                                                             "_meta" meta-2026})))
+                                                                            "_meta" meta-2026})))
         chars (count wide)
         bytes (alength (.getBytes ^String wide "UTF-8"))
         limit (+ chars 20)

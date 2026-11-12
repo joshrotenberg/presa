@@ -245,7 +245,7 @@
   (when-let [cache (:cache client)]
     (case method
       ("notifications/tools/list_changed" "notifications/prompts/list_changed"
-       "notifications/resources/list_changed")
+                                          "notifications/resources/list_changed")
       (let [kind (second (re-find #"notifications/(\w+)/list_changed" method))]
         (swap! cache (fn [m] (into {} (remove (fn [[[cm] _]] (and (= kind (cache-kinds cm)) (not= "resources/read" cm)))) m))))
 

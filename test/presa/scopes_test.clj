@@ -55,14 +55,14 @@
       (is (= "7" (get-in (call srv admin "resources/read" {"uri" "file:///hidden/7"}) ["result" "contents" 0 "text"]))))
     (testing "completion needs the scopes of what it completes"
       (is (= -32003 (code (call srv reader "completion/complete" {"ref" {"type" "ref/prompt" "name" "secret"}
-                                                                 "argument" {"name" "a" "value" ""}}))))
+                                                                  "argument" {"name" "a" "value" ""}}))))
       (is (= -32003 (code (call srv reader "completion/complete" {"ref" {"type" "ref/resource" "uri" "file:///hidden/{id}"}
-                                                                 "argument" {"name" "id" "value" ""}}))))
+                                                                  "argument" {"name" "id" "value" ""}}))))
       (is (= ["ok"] (get-in (call srv reader "completion/complete" {"ref" {"type" "ref/prompt" "name" "public"}
-                                                                   "argument" {"name" "a" "value" ""}})
+                                                                    "argument" {"name" "a" "value" ""}})
                             ["result" "completion" "values"])))
       (is (= ["leak"] (get-in (call srv admin "completion/complete" {"ref" {"type" "ref/prompt" "name" "secret"}
-                                                                    "argument" {"name" "a" "value" ""}})
+                                                                     "argument" {"name" "a" "value" ""}})
                               ["result" "completion" "values"]))))))
 
 (deftest default-scopes

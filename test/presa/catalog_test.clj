@@ -51,7 +51,7 @@
 (deftest cursors-expire-when-the-list-changes
   (let [srv (server/server {:name "t" :version "1" :page-size 1 :tools [(tool "a") (tool "b")]})
         list-page (fn [cursor] (second (server/handle srv {} (rpc/request 1 "tools/list" (cond-> {"_meta" meta-2026}
-                                                                                            cursor (assoc "cursor" cursor))))))
+                                                                                           cursor (assoc "cursor" cursor))))))
         cursor (get-in (list-page nil) ["result" "nextCursor"])]
     (is (= ["b"] (map #(get % "name") (get-in (list-page cursor) ["result" "tools"]))))
     (server/add-tool! srv (tool "c"))

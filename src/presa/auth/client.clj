@@ -281,9 +281,9 @@
                  (choose-method opts registered as (some? client-secret)))
         basic (when (= "client_secret_basic" method)
                 (str "Basic " (.encodeToString (Base64/getEncoder)
-                                                (.getBytes (str (URLEncoder/encode client-id "UTF-8") ":"
-                                                                (URLEncoder/encode (str client-secret) "UTF-8"))
-                                                           "UTF-8"))))
+                                               (.getBytes (str (URLEncoder/encode client-id "UTF-8") ":"
+                                                               (URLEncoder/encode (str client-secret) "UTF-8"))
+                                                          "UTF-8"))))
         form (cond-> (if client-id (assoc form "client_id" client-id) form)
                (= "client_secret_post" method) (assoc "client_secret" client-secret)
                (= "private_key_jwt" method)

@@ -81,36 +81,36 @@
   a name with elicitation/create."
   ([] (chatty-backend {}))
   ([opts]
-  (server/server
-   (merge opts
-   {:name "old" :version "1" :versions protocol/versions :logging true
-    :tools [{:name "noisy" :description "Logs at two levels"
-             :handler (fn [_ ctx]
-                        (server/log! ctx "debug" "a detail")
-                        (server/log! ctx "warning" "a warning" "noisy")
-                        "logged")}
-            {:name "greet" :description "Asks who to greet"
-             :handler (fn [_ ctx]
-                        (let [r (server/client-request! ctx "elicitation/create"
-                                                        {"mode" "form" "message" "who?"
-                                                         "requestedSchema" {"type" "object"
-                                                                            "properties" {"name" {"type" "string"}}}})]
-                          (str "hello " (get-in r ["content" "name"]))))}
-            {:name "greet-twice" :description "Asks twice"
-             :handler (fn [_ ctx]
-                        (let [ask #(get-in (server/client-request! ctx "elicitation/create"
-                                                                   {"mode" "form" "message" %
-                                                                    "requestedSchema" {"type" "object"
-                                                                                       "properties" {"name" {"type" "string"}}}})
-                                           ["content" "name"])]
-                          (str (ask "first?") " and " (ask "second?"))))}]}))))
+   (server/server
+    (merge opts
+           {:name "old" :version "1" :versions protocol/versions :logging true
+            :tools [{:name "noisy" :description "Logs at two levels"
+                     :handler (fn [_ ctx]
+                                (server/log! ctx "debug" "a detail")
+                                (server/log! ctx "warning" "a warning" "noisy")
+                                "logged")}
+                    {:name "greet" :description "Asks who to greet"
+                     :handler (fn [_ ctx]
+                                (let [r (server/client-request! ctx "elicitation/create"
+                                                                {"mode" "form" "message" "who?"
+                                                                 "requestedSchema" {"type" "object"
+                                                                                    "properties" {"name" {"type" "string"}}}})]
+                                  (str "hello " (get-in r ["content" "name"]))))}
+                    {:name "greet-twice" :description "Asks twice"
+                     :handler (fn [_ ctx]
+                                (let [ask #(get-in (server/client-request! ctx "elicitation/create"
+                                                                           {"mode" "form" "message" %
+                                                                            "requestedSchema" {"type" "object"
+                                                                                               "properties" {"name" {"type" "string"}}}})
+                                                   ["content" "name"])]
+                                  (str (ask "first?") " and " (ask "second?"))))}]}))))
 
 (def ^:private elicit-caps {"elicitation" {"form" {}}})
 
 (defn- names-from [names]
   (let [left (atom names)]
     {"elicitation/create" (fn [_] (let [n (first @left)] (swap! left rest)
-                                    {"action" "accept" "content" {"name" n}}))}))
+                                       {"action" "accept" "content" {"name" n}}))}))
 
 (defn- check-forwarding [backend-client]
   (let [{:keys [server close!]} (proxy/proxy-server [{:prefix "old" :client backend-client}]

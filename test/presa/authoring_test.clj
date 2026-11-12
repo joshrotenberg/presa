@@ -41,13 +41,13 @@
              (get-in (result srv "tools/list" {}) ["tools" 0 "outputSchema"]))))
     (testing "and validate as JSON Schema"
       (is (= "{\"sum\":6}" (get-in (result srv "tools/call" {"name" "add" "arguments" {"numbers" [1 2 3]}})
-                                  ["content" 0 "text"])))
+                                   ["content" 0 "text"])))
       (let [bad (result srv "tools/call" {"name" "add" "arguments" {"mode" "slow"}})]
         (is (true? (get bad "isError")))))
     (testing "count as object schemas for initialize-era clients"
       (let [[session] (server/handle srv {} (rpc/request 1 "initialize" {"protocolVersion" "2025-11-25"
-                                                                        "capabilities" {}
-                                                                        "clientInfo" {"name" "c" "version" "1"}}))
+                                                                         "capabilities" {}
+                                                                         "clientInfo" {"name" "c" "version" "1"}}))
             [_ listed] (server/handle srv session (rpc/request 2 "tools/list" {}))]
         (is (= ["add"] (map #(get % "name") (get-in listed ["result" "tools"]))))))
     (testing "added to a running server too"

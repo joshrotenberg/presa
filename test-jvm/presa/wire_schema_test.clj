@@ -157,8 +157,8 @@
           bad (filter (comp seq :problems) checked)]
       (is (> (count checked) 60) "the run covered enough traffic")
       (is (= #{} (set (map :def bad))) (str/join "\n" (map (fn [{:keys [def problems message]}]
-                                                            (str def ": " problems " in " (pr-str message)))
-                                                          (take 5 bad))))
+                                                             (str def ": " problems " in " (pr-str message)))
+                                                           (take 5 bad))))
       (testing "the run reached every kind of message"
         (is (every? (set (map :def checked))
                     ["DiscoverResultResponse" "ListToolsResultResponse" "CallToolResultResponse"
