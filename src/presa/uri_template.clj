@@ -50,7 +50,9 @@
                                  parts)))]
     (fn [uri]
       (when-let [groups (and (string? uri) (re-matches pattern uri))]
-        (zipmap names (map decode (if (string? groups) [] (rest groups))))))))
+        ;; a URI whose percent-encoding cannot be decoded matches nothing
+        (try (zipmap names (mapv decode (if (string? groups) [] (rest groups))))
+             (catch IllegalArgumentException _ nil))))))
 
 (defn expand
   "The URI a template names for values, a map with string keys. Simple
