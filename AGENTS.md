@@ -1,7 +1,7 @@
 # Working on presa
 
-Written by `cj project init` for agents and contributors working here. Keep it
-current as the project changes.
+For agents and contributors working here. Keep it current as the project
+changes.
 
 ## Layout
 
@@ -18,27 +18,23 @@ current as the project changes.
 | `conformance/` | The official conformance runner's harness, fixture, baselines and vendored schema |
 | `dev/` | `lint.clj` (`bb lint`) and `host_probe.clj` (what real hosts send) |
 | `build.clj` | The jar and Clojars deploy (`clojure -T:build jar`) |
-| `.cj/` | cj project layer: the check recipe and config |
 
 ## Checks
 
-Run `cj run check` before pushing; it must report `:ok? true`. It runs these
-commands from `.cj/recipes/check.clj`, every one even when an earlier one
-fails, then checks the conventions below:
+Run these before pushing; each must pass:
 
 - `bb test`
 - `bb jvm-test`
-- `bb lint`
+- `bb lint` (clj-kondo and the conventions below)
 
-CI runs those, `bb lint` (clj-kondo and the conventions below, without cj), the jar
-build, the server conformance lanes (`bb conformance <revision>`, each against
-`conformance/baselines/<revision>.json`) and the client lanes
-(`bb conformance client <revision>`, against `client-<revision>.json`); see
-`conformance/README.md`.
+CI runs those, the jar build, the server conformance lanes (`bb conformance
+<revision>`, each against `conformance/baselines/<revision>.json`) and the
+client lanes (`bb conformance client <revision>`, against
+`client-<revision>.json`); see `conformance/README.md`.
 
 ## Conventions
 
-The check enforces these:
+`bb lint` enforces these:
 
 - clj-kondo finds no errors or warnings in `src`, `test`, `test-jvm`,
   `examples`, `dev`, `conformance` and the build files. `bb lint` runs it
@@ -59,7 +55,7 @@ The check enforces these:
 
 ## Design rules
 
-These are not checked by `cj run check`; reviews hold changes to them.
+These are not checked by `bb lint`; reviews hold changes to them.
 
 - Every namespace loads under Babashka and on the JVM from the same source, except `presa.schema.networknt`, which is JVM only and needs its own optional dependency. Runtime dependencies are limited to what Babashka bundles: `clojure.data.json` in the core, and http-kit for the HTTP transport.
 - MCP `2026-07-28` (stateless: `_meta` on each request, `server/discover`, `resultType`) comes first. Initialize-era revisions (`2025-11-25`, `2025-06-18`) are an opt-in layered on top, never the default path.
