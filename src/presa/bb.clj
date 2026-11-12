@@ -78,6 +78,8 @@
               :input-schema {:type :object
                              :properties {:args {:type :array :items {:type :string}
                                                  :description "Command-line arguments for the task."}}}
+              ;; the handler reads string keys whatever the server's :keywordize-args?
+              :keywordize-args? false
               :handler (fn [{:strs [args]} _]
                          (let [{:keys [exit out err timed-out?]} (run-task bb f task (vec args) timeout-ms max-chars)
                                text (str (if timed-out? (str "timed out after " timeout-ms " ms") (str "exit " exit))

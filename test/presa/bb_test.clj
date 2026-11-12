@@ -22,6 +22,9 @@
             (is (true? (get r "isError")))
             (is (re-find #"exit 3" (client/text r)))
             (is (re-find #"1 failure" (client/text r)))))))
+    (testing "args reach the task when the server keywordizes arguments"
+      (part/with-client {:parts [p] :keywordize-args? true}
+        (fn [c] (is (re-find #"hello Ada" (client/text (client/call-tool c "greet" {"args" ["Ada"]})))))))
     (testing ":only overrides the opt-in"
       (is (= ["shout"] (map :name (:tools (pb/task-tools {:bb-edn fixture :only ['shout]})))))))
   (testing "a timeout is an error, and the task comes from the named file"
