@@ -89,16 +89,25 @@
 
 (defn serve!
   "Serve the parts over stdio until stdin closes, then close them and return
-  what their :close! functions returned. opts are `server`'s plus
-  presa.transport.stdio/serve!'s :in, :out and :log."
+  what their :close! functions returned. The parts are also closed when the
+  process ends another way, such as SIGTERM or SIGINT; they are closed once.
+  opts are `server`'s plus presa.transport.stdio/serve!'s :in, :out, :log
+  and :max-line-bytes."
   [opts]
-  (let [[srv p] (server (dissoc opts :in :out :log))
-        log (or (:log opts) (fn [& parts] (binding [*out* *err*] (apply println parts))))]
+  (let [stdio-keys [:in :out :log :max-line-bytes]
+        [srv p] (server (apply dissoc opts stdio-keys))
+        log (or (:log opts) (fn [& parts] (binding [*out* *err*] (apply println parts))))
+        closed (delay ((:close! p)))]
     (when (seq (:dropped p))
       (log (str (get-in srv [:info "name"]) ": shadowed by an earlier part: " (pr-str (:dropped p)))))
-    (try (stdio/serve! srv (select-keys opts [:in :out :log]))
-         (catch Throwable e ((:close! p)) (throw e)))
-    ((:close! p))))
+    ;; The hook stays registered: a host that stops the process often closes
+    ;; stdin and signals at once, and the close begun on this thread when
+    ;; serve! returns must hold the shutdown until it finishes. The delay
+    ;; runs it once either way.
+    (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable (fn [] @closed)))
+    (try (stdio/serve! srv (select-keys opts stdio-keys))
+         (catch Throwable e @closed (throw e)))
+    @closed))
 
 (defn with-client
   "Call f with a presa client connected in process to the server opts

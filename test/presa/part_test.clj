@@ -144,3 +144,33 @@
     (is (= [:closed] result) "serve! returns what the parts' close! returned")
     (is @closed)
     (is (str/includes? (str out) "\"name\":\"t\""))))
+
+(deftest serve-passes-the-line-limit
+  (let [out (java.io.StringWriter.)]
+    (part/serve! {:parts [{:tools [(tool "t" "x")]}]
+                  :in (java.io.StringReader. (str (apply str (repeat 200 "x")) "\n"))
+                  :out out :log (fn [& _]) :max-line-bytes 100})
+    (is (str/includes? (str out) "100-byte line limit"))))
+
+(deftest a-signalled-server-closes-its-parts
+  (let [marker (java.io.File/createTempFile "presa-part" ".closed")
+        _ (.delete marker)
+        script (pr-str (list 'do
+                             '(require (quote [presa.part :as part]))
+                             (list 'part/serve! {:parts [{:tools [{:name "t" :handler '(fn [_ _] "x")}]
+                                                          :close! (list 'fn [] (list 'spit (.getPath marker) "closed"))}]
+                                                 :log '(fn [& _])})))
+        proc (.start (ProcessBuilder. ^java.util.List ["bb" "--config" (.getCanonicalPath (io/file "bb.edn")) "-e" script]))]
+    (try
+      ;; a request answered means the server is up; stdin stays open
+      (doto (.getOutputStream proc)
+        (.write (.getBytes (rpc/write-line (rpc/request 1 "server/discover"
+                                                        {"_meta" {"io.modelcontextprotocol/protocolVersion" "2026-07-28"
+                                                                  "io.modelcontextprotocol/clientCapabilities" {}}}))
+                           "UTF-8"))
+        (.flush))
+      (is (some? (.readLine (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream proc))))))
+      (.destroy proc)
+      (.waitFor proc 10 java.util.concurrent.TimeUnit/SECONDS)
+      (is (= "closed" (when (.exists marker) (slurp marker))) "SIGTERM ran the parts' close!")
+      (finally (.destroyForcibly proc) (.delete marker)))))
