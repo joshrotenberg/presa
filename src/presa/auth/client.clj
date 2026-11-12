@@ -178,7 +178,7 @@
     (or (= "https" scheme)
         (and (= "http" scheme) (contains? #{"127.0.0.1" "localhost" "[::1]" "::1"} host)))))
 
-(defn- discover-as [issuer]
+(defn- discover-as [issuer {:keys [allow-http?]}]
   (let [doc (or (some get-json (as-metadata-urls issuer))
                 (fail :authorization-server-metadata (str "No authorization server metadata for " issuer)))]
     ;; RFC 8414 section 3.3: exactly the issuer the URL was built from
@@ -190,7 +190,7 @@
     ;; credentials and codes go to these: HTTPS, as the spec requires
     (doseq [k ["issuer" "token_endpoint" "authorization_endpoint" "registration_endpoint"]
             :let [v (get doc k)]
-            :when (and (some? v) (not (secure-url? v)))]
+            :when (and (some? v) (not allow-http?) (not (secure-url? v)))]
       (fail :authorization-server-metadata (str "The authorization server's " k " is not HTTPS") {:url v}))
     doc))
 
@@ -409,7 +409,7 @@
                   {:resource resource :server server-url}))
         issuer (or (first (get prm "authorization_servers"))
                    (fail :resource-metadata "The protected resource metadata names no authorization server"))
-        as (discover-as issuer)
+        as (discover-as issuer opts)
         current (:token @state)
         ;; a token from another authorization server is not reused
         granted (when (= issuer (:issuer current)) (:scopes current))
@@ -481,7 +481,13 @@
                    code_challenge_methods_supported; refused by default, as
                    the spec requires
 
-  Authorization server endpoints must be https, except on loopback hosts.
+  - :allow-http?    accept authorization server endpoints over plain http on
+                   any host, such as a development server in a container
+                   network (http://keycloak:8080); credentials and codes then
+                   travel unencrypted
+
+  Authorization server endpoints must be https, except on loopback hosts,
+  unless :allow-http? is true.
   - :dpop          false to never use DPoP (RFC 9449). Otherwise the provider
                    sends DPoP proofs (ES256, a key per provider) when the
                    authorization server lists ES256 in

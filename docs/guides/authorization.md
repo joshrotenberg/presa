@@ -133,7 +133,10 @@ authorization server is never reused.
 The client refuses an authorization server whose metadata does not list
 `S256` in `code_challenge_methods_supported` (`:allow-unadvertised-pkce?
 true` accepts metadata that leaves the field out), and one whose issuer or
-endpoints are not `https`, loopback hosts aside.
+endpoints are not `https`, loopback hosts aside. `:allow-http? true` accepts
+plain http on any host, for a development authorization server in a
+container network such as `http://keycloak:8080`; credentials and codes
+then travel unencrypted.
 
 The browser step is yours: an authorizer gets the authorization URL and
 returns the URL the authorization server redirected to.

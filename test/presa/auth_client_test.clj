@@ -194,4 +194,6 @@
       (is (= {:refused? false :asked? [:get "/authorize"]}
              (update (refused? {:methods :omit} {:allow-unadvertised-pkce? true}) :asked? #(when % [:get "/authorize"])))))
     (testing "an http token endpoint on another host is refused before any request to it"
-      (is (= {:refused? true :asked? nil} (refused? {:metadata {"token_endpoint" "http://auth.example.com/token"}} {}))))))
+      (is (= {:refused? true :asked? nil} (refused? {:metadata {"token_endpoint" "http://auth.example.com/token"}} {}))))
+    (testing ":allow-http? accepts it, and the flow goes on to the authorization request"
+      (is (some? (:asked? (refused? {:metadata {"token_endpoint" "http://auth.example.com/token"}} {:allow-http? true})))))))
