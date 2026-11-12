@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.4](https://github.com/joshrotenberg/presa/compare/v0.1.3...v0.1.4) (2026-11-12)
+
+
+### Features
+
+* :allow-http? lets the OAuth client use plain-http authorization servers ([#128](https://github.com/joshrotenberg/presa/issues/128)) ([a45d1c0](https://github.com/joshrotenberg/presa/commit/a45d1c00e64a17af2efb188a61865dbd7d104e6a))
+* bound finished tasks with :max-finished, and reap on reads ([#125](https://github.com/joshrotenberg/presa/issues/125)) ([aa43d24](https://github.com/joshrotenberg/presa/commit/aa43d241a0e7da04cbc936df3cf8ac2af2afd09c))
+* cap initialize-era HTTP sessions per authenticated subject ([#127](https://github.com/joshrotenberg/presa/issues/127)) ([dd5a4b2](https://github.com/joshrotenberg/presa/commit/dd5a4b20f6e27df0e6c8ad463a257a734caa7f26))
+* settable per-request progress and log caps ([#130](https://github.com/joshrotenberg/presa/issues/130)) ([42ca8aa](https://github.com/joshrotenberg/presa/commit/42ca8aa44158aaec4121d04b3b3f7bd8bd71ad25))
+* the OAuth client renews an expired token with its refresh token ([#129](https://github.com/joshrotenberg/presa/issues/129)) ([2d2af54](https://github.com/joshrotenberg/presa/commit/2d2af5413b3224221f6f5ec365c9d79e6e2338d8))
+
+
+### Bug Fixes
+
+* requestState and input answers have one shape on every path ([#124](https://github.com/joshrotenberg/presa/issues/124)) ([46dfd91](https://github.com/joshrotenberg/presa/commit/46dfd91800115ecdf229c9f426a0441f83c050bf))
+
 ## [0.1.3](https://github.com/joshrotenberg/presa/compare/v0.1.2...v0.1.3) (2026-11-12)
 
 
