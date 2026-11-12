@@ -294,6 +294,22 @@
         (is (true? (deref interrupted 5000 false)) "closing the connection interrupted the handler"))
       (finally ((:stop! s))))))
 
+(deftest a-client-renews-a-session-the-server-forgot
+  (let [s1 (http/serve! srv {})
+        port (:port s1)
+        c (client/connect (http/url (:url s1)) {:versions ["2025-11-25"]})
+        s2 (atom nil)]
+    (try
+      (is (= "before" (client/text (client/call-tool c "echo" {"text" "before"}))))
+      ;; a restarted server knows no sessions, so the next request gets 404
+      ((:stop! s1))
+      (reset! s2 (http/serve! srv {:port port}))
+      (is (= "after" (client/text (client/call-tool c "echo" {"text" "after"}))) "renewed and retried")
+      (is (= "again" (client/text (client/call-tool c "echo" {"text" "again"}))) "the new session holds")
+      (finally
+        (client/close c)
+        (some-> @s2 :stop! (apply []))))))
+
 (deftest header-values
   (is (= "plain value" (http/encode-header-value "plain value")))
   (is (= "true" (http/encode-header-value true)))
