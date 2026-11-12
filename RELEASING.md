@@ -16,9 +16,10 @@ on either (`:mvn/version`, or `:git/tag` with its `:git/sha`).
    `fix` commits the patch version.
 3. Merging that pull request tags `vX.Y.Z` on `main` and creates the GitHub
    release.
-4. The workflow's `clojars` job then checks out the tag and runs
-   `clojure -T:build deploy` (`build.clj`), which builds the jar and its pom
-   and uploads them to Clojars. CI builds the same jar on every pull
+4. The workflow's `clojars` job then checks out the tag, runs `bb test` and
+   `bb jvm-test`, and runs `clojure -T:build deploy` (`build.clj`), which
+   builds the jar and its pom and uploads them to Clojars. A failing test
+   stops the deploy; the GitHub release and tag already exist by then. CI builds the same jar on every pull
    request.
 
 ## Repository settings it needs
