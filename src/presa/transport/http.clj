@@ -4,8 +4,8 @@
 
   The server takes POSTs on one path. A 2026-07-28 request is independent:
   its version comes from _meta and must match the MCP-Protocol-Version
-  header, and Mcp-Method (and Mcp-Name for tools/call, prompts/get and
-  resources/read) must match the body. The response is JSON, or an event
+  header, and Mcp-Method (and Mcp-Name for tools/call, prompts/get,
+  resources/read and the tasks methods) must match the body. The response is JSON, or an event
   stream once the request sends progress or log notifications. An
   initialize-era client gets a session: initialize answers with an
   Mcp-Session-Id that later requests carry, and DELETE ends it.

@@ -310,6 +310,8 @@
   "Send the server a notification."
   ([client method] (notify client method nil))
   ([client method params]
+   (when @(:closed client)
+     (throw (ex-info "The connection is closed" {:kind :closed})))
    ((:send! @(:conn client)) (rpc/notification method params))))
 
 ;; Negotiation
@@ -586,8 +588,15 @@
              (on-notification message)
              (when (= "notifications/subscriptions/acknowledged" (get message "method"))
                (deliver acknowledged (get message "params")))))
+    (when @(:closed client)
+      (throw (ex-info "The connection is closed" {:kind :closed})))
     (swap! (:pending client) assoc id p)
-    ((:send! @(:conn client)) (rpc/request id "subscriptions/listen" params))
+    (try ((:send! @(:conn client)) (rpc/request id "subscriptions/listen" params))
+         (catch Throwable e
+           ;; nothing was sent: leave nothing behind
+           (swap! (:subscriptions client) dissoc id)
+           (swap! (:pending client) dissoc id)
+           (throw e)))
     (future
       (let [response @p]
         (swap! (:subscriptions client) dissoc id)
