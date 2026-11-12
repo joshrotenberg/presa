@@ -94,8 +94,9 @@
 ;;                :renewals}
 ;; :renew-lock   held while a session the server no longer knows is renewed
 ;; :annotations  tool name -> its x-mcp-header annotations
-;; :streams      request id -> {:body stream}, open POST event streams;
-;;               closing one cancels its request
+;; :streams      request id -> {:pending exchange :body stream} for each POSTed
+;;               request in flight; cancelling the exchange, or closing the
+;;               body of its JSON or event-stream response, cancels it
 ;; :closed       true once close! has run
 ;; :answered     ids of the responses delivered, to tell a stream that
 ;;               ended before its response from one that carried it
@@ -199,13 +200,20 @@
 
 (defn- send-post
   "POST message with token; hands a DPoP-Nonce response header to the
-  provider's :nonce!."
-  [{:keys [^HttpClient client uri headers token-provider endpoint state annotations]} message token]
+  provider's :nonce!. A request's exchange is registered in streams until
+  its response starts, so a cancel can abort it."
+  [{:keys [^HttpClient client uri headers token-provider endpoint state annotations streams]} message token]
   (let [builder (-> (HttpRequest/newBuilder uri)
                     (with-headers (merge (request-headers message state annotations) headers))
-                    (with-headers (auth-headers token-provider endpoint token "POST")))]
+                    (with-headers (auth-headers token-provider endpoint token "POST")))
+        id (when (contains? message "method") (get message "id"))]
     (.POST builder (HttpRequest$BodyPublishers/ofString (write-json message)))
-    (let [^HttpResponse resp (.send client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))]
+    (let [^java.util.concurrent.CompletableFuture exchange
+          (.sendAsync client (.build builder) (HttpResponse$BodyHandlers/ofInputStream))
+          _ (when (some? id) (swap! streams update id assoc :pending exchange))
+          ^HttpResponse resp (try (.get exchange)
+                                  (catch java.util.concurrent.ExecutionException e
+                                    (throw (or (ex-cause e) e))))]
       (when-let [nonce (response-header resp "dpop-nonce")]
         (when-let [f (:nonce! token-provider)] (f endpoint nonce)))
       resp)))
@@ -294,13 +302,20 @@
           (resume! conn id seen)))
 
       (str/starts-with? content-type "application/json")
-      (let [body (slurp (.body resp) :encoding "UTF-8")
-            m (try (rpc/parse-line body) (catch Exception _ nil))]
-        (if (and (map? m) (#{:response :error} (rpc/kind m)))
-          (deliver! conn m)
-          (when (some? id)
-            (deliver! conn (rpc/error id -32000 (str "HTTP " status " with an unreadable body")
-                                      {"status" status})))))
+      (let [in (.body resp)
+            _ (when (some? id) (swap! streams update id assoc :body in))
+            body (try (slurp in :encoding "UTF-8")
+                      (catch java.io.IOException e
+                        ;; a cancel closed it
+                        (when (contains? @streams id) (throw e))
+                        ::cancelled))]
+        (when-not (= ::cancelled body)
+          (let [m (try (rpc/parse-line body) (catch Exception _ nil))]
+            (if (and (map? m) (#{:response :error} (rpc/kind m)))
+              (deliver! conn m)
+              (when (some? id)
+                (deliver! conn (rpc/error id -32000 (str "HTTP " status " with an unreadable body")
+                                          {"status" status})))))))
 
       :else
       (do (.close ^java.io.InputStream (.body resp))
@@ -346,7 +361,7 @@
                   (log "renewed the session the server no longer knew")
                   true)))))))))
 
-(defn- post [{:keys [state] :as conn} message]
+(defn- post* [{:keys [state] :as conn} message]
   (let [sid (:session-id @state)]
     (when-let [^HttpResponse resp (authorized-response conn message)]
       (if (and sid (= 404 (.statusCode resp)) (not= "initialize" (get message "method")))
@@ -357,6 +372,16 @@
               (when-let [id (get message "id")]
                 (deliver! conn (rpc/error id -32000 "HTTP 404" {"status" 404})))))
         (read-response! conn message resp)))))
+
+(defn- post
+  "Post message and deliver what comes back; its streams entry goes when it
+  is done."
+  [{:keys [streams] :as conn} message]
+  (try
+    (post* conn message)
+    (finally
+      (when (and (contains? message "method") (some? (get message "id")))
+        (swap! streams dissoc (get message "id"))))))
 
 (defn- list-tools!
   "Learn the tools' x-mcp-header annotations before calling one this
@@ -385,13 +410,14 @@
     (throw (ex-info "The transport is closed" {:kind :closed})))
   (when (= "initialize" (get message "method"))
     (swap! state assoc :initialize-id (get message "id") :initialize-message message))
-  (if-let [{:keys [^java.io.InputStream body]}
+  (if-let [{:keys [^java.io.InputStream body ^java.util.concurrent.Future pending]}
            (and (= "notifications/cancelled" (get message "method"))
                 (get @streams (get-in message ["params" "requestId"])))]
-    ;; over HTTP, closing the response stream (and with it the connection)
-    ;; cancels the request
+    ;; over HTTP, ending the exchange (and with it the connection) cancels
+    ;; the request
     (do (swap! streams dissoc (get-in message ["params" "requestId"]))
-        (try (.close body) (catch Exception _)))
+        (some-> pending (.cancel true))
+        (some-> body (.close)))
     ;; Each message is posted on its own thread. The promise a later request
     ;; waits on is made here, in send order, so a request sent just after
     ;; initialized cannot be posted before the session stream opens.
@@ -412,8 +438,9 @@
                  (session-stream! conn ready)
                  (deliver ready true)))
              (catch Throwable e
-               (log "HTTP request failed: " (.getName (class e)) ": " (ex-message e)
-                    (when-let [c (ex-cause e)] (str " (" (.getName (class c)) ": " (ex-message c) ")")))
+               (when-not (instance? java.util.concurrent.CancellationException e)
+                 (log "HTTP request failed: " (.getName (class e)) ": " (ex-message e)
+                      (when-let [c (ex-cause e)] (str " (" (.getName (class c)) ": " (ex-message c) ")"))))
                (some-> ready (deliver true))
                (when-let [id (get message "id")]
                  (on-message (rpc/error id -32000 (str "HTTP request failed: " (ex-message e)))))))))))

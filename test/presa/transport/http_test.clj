@@ -325,6 +325,33 @@
         (is (= -32603 (get-in (json-body r) ["error" "code"]))))
       (finally ((:stop! s))))))
 
+(deftest a-cancelled-request-ends-its-exchange
+  ;; tools/call for "stall" is never answered: either no response starts,
+  ;; or JSON headers and part of a body go out and the rest never comes.
+  ;; A cancelled request closes its connection, which the server sees.
+  (doseq [[label stall] [["no response" (fn [_])]
+                         ["a stalled JSON body" (fn [ch] (hk/send! ch {:status 200 :headers {"content-type" "application/json"}
+                                                                        :body "{\"jsonrpc\":"} false))]]]
+    (testing label
+      (let [inner (http/handler srv)
+            closes (atom 0)
+            server (hk/run-server
+                    (fn [req]
+                      (let [body (slurp (:body req))]
+                        (if (str/includes? body "\"stall\"")
+                          (hk/as-channel req {:on-open stall :on-close (fn [_ _] (swap! closes inc))})
+                          (inner (assoc req :body (java.io.ByteArrayInputStream. (.getBytes body "UTF-8")))))))
+                    {:port 0 :ip "127.0.0.1" :legacy-return-value? false})
+            c (client/connect (http/url (str "http://127.0.0.1:" (hk/server-port server) "/mcp")))]
+        (try
+          (dotimes [_ 10]
+            (is (thrown? Exception (client/call-tool c "stall" {} {:timeout-ms 300}))))
+          (is (loop [n 0] (cond (= 10 @closes) true
+                                (> n 50) false
+                                :else (do (Thread/sleep 50) (recur (inc n)))))
+              (str "each timed-out request closed its connection (" @closes " of 10)"))
+          (finally (client/close c) @(hk/server-stop! server {:timeout 100})))))))
+
 (deftest header-values
   (is (= "plain value" (http/encode-header-value "plain value")))
   (is (= "true" (http/encode-header-value true)))
