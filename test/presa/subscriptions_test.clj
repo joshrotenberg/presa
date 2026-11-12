@@ -1,7 +1,9 @@
 (ns presa.subscriptions-test
   (:require [clojure.test :refer [deftest is testing]]
             [presa.client :as client]
+            [presa.connection :as connection]
             [presa.jsonrpc :as rpc]
+            [presa.protocol :as protocol]
             [presa.server :as server]
             [presa.transport.http :as http]))
 
@@ -134,3 +136,19 @@
         (server/resource-updated! srv "file:///docs")
         (is (wait-for #(some #{"notifications/resources/updated"} @heard))))
       (finally (client/close c) (stop!)))))
+
+(deftest a-second-initialize-replaces-the-first-sessions-listeners
+  (let [srv (server/server {:name "t" :version "1" :versions protocol/versions :list-changed true
+                            :tools [{:name "a" :handler (fn [_ _] "a")}]})
+        sent (atom [])
+        {:keys [receive! close!]} (connection/open srv {:send #(swap! sent conj %)})
+        init (fn [id] (receive! (rpc/request id "initialize" {"protocolVersion" "2025-06-18" "capabilities" {}
+                                                             "clientInfo" {"name" "c" "version" "0"}})))]
+    (init 1)
+    (init 2)
+    (Thread/sleep 200)
+    (server/add-tool! srv {:name "b" :handler (fn [_ _] "b")})
+    (Thread/sleep 200)
+    (is (= 1 (count (filter #(= "notifications/tools/list_changed" (get % "method")) @sent))))
+    (close!)
+    (is (empty? @(:listeners srv)) "nothing is left once the connection closes")))
