@@ -19,6 +19,7 @@
             [clojure.string :as str]
             [presa.client :as client]
             [presa.protocol :as protocol]
+            [presa.proxy :as px]
             [presa.server :as server]
             [presa.transport.stdio :as stdio]))
 
@@ -136,23 +137,14 @@
 
 ;; Another server as a part
 
-(defn- call-opts
-  "Options for a forwarded call: the backend's progress and log messages go
-  to the caller, at the caller's log level."
-  [ctx]
-  (cond-> {:on-progress (fn [{:strs [progress total message]}]
-                          (server/progress! ctx progress (cond-> {} total (assoc :total total) message (assoc :message message))))
-           :on-log (fn [{:strs [level data logger]}]
-                     (when (string? level)
-                       (try (server/log! ctx level data logger) (catch Exception _ nil))))}
-    (:log-level ctx) (assoc :log-level (:log-level ctx))))
-
 (defn proxy
   "A part fronting the MCP server that cmd (a vector of strings) starts,
-  over stdio: the tools and resources it advertises, listed once when this
-  connects, each call forwarded to it with its progress and log messages.
-  :close! closes the connection, which ends the backend; so does a failure
-  while building the part. Options:
+  over stdio: presa.proxy/part of its connection, with no prefix. Its
+  tools, prompts, resources and resource templates are listed once when
+  this connects (a part does not follow list changes; presa.proxy/proxy-server
+  does), and each call is forwarded with its input requests, progress, log
+  messages and cancellation. :close! closes the connection, which ends the
+  backend; so does a failure while building the part. Options:
 
   - :dir, :env, :stderr  see presa.transport.stdio/command
   - :versions, :probe-timeout-ms, :client-info  see presa.client/connect
@@ -164,24 +156,9 @@
                            (assoc (select-keys opts [:versions :probe-timeout-ms :client-info])
                                   :timeout-ms timeout-ms))]
      (try
-       (let [caps (:server-capabilities (client/info c))]
-         {:tools (vec (for [t (when (contains? caps "tools") (client/list-tools c))
-                            :let [n (get t "name")]]
-                        (cond-> {:name n
-                                 :input-schema (get t "inputSchema" {"type" "object"})
-                                 ;; the backend's own resultType and _meta do not belong in ours
-                                 :handler (fn [args ctx] (dissoc (client/call-tool c n args (call-opts ctx)) "resultType" "_meta"))}
-                          (get t "description") (assoc :description (get t "description"))
-                          (get t "outputSchema") (assoc :output-schema (get t "outputSchema"))
-                          (get t "annotations") (assoc :annotations (get t "annotations")))))
-          :resources (vec (for [r (when (contains? caps "resources") (client/list-resources c))
-                                :let [uri (get r "uri")]]
-                            (cond-> {:uri uri :name (get r "name")
-                                     :handler (fn [_] (client/read-resource c uri))}
-                              (get r "mimeType") (assoc :mime-type (get r "mimeType"))
-                              (get r "description") (assoc :description (get r "description")))))
-          :instructions (:instructions (client/info c))
-          :close! (fn [] (client/close c) :closed)})
+       (assoc (px/part {:prefix "" :separator "" :client c})
+              :instructions (:instructions (client/info c))
+              :close! (fn [] (client/close c) :closed))
        (catch Throwable e
          (client/close c)
          (throw e))))))
