@@ -216,3 +216,23 @@
       (is (= ["authorization_code" "refresh_token"] (take 2 @(:grants as))))
       (is (= 1 (count (filter #{[:get "/authorize"]} @(:seen as)))) "the browser step ran once")
       (finally (client/close c) ((:stop! rs)) ((:stop! as))))))
+
+(deftest a-pinned-issuer
+  (let [kp (rsa)
+        as (auth-server kp nil {})
+        rs (protected-server (:issuer as) kp)
+        connect (fn [issuer] (try (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs)
+                                                                                                        :authorizer (oauth/redirect-reader)
+                                                                                                        :client-id "pre" :client-secret "s"
+                                                                                                        :issuer issuer})}))
+                                  (catch Exception e e)))]
+    (try
+      (testing "an issuer the metadata does not list is refused before any request to an authorization server"
+        (let [e (connect "https://auth.example.com")]
+          (is (= -32000 (:code (ex-data e))))
+          (is (empty? @(:seen as)))))
+      (testing "the listed one is used"
+        (let [c (connect (:issuer as))]
+          (try (is (= "pre" (client/text (client/call-tool c "whoami"))))
+               (finally (client/close c)))))
+      (finally ((:stop! rs)) ((:stop! as))))))
