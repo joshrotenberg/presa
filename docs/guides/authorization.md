@@ -128,7 +128,10 @@ registration), runs the authorization code flow with PKCE and the
 resource indicator, checks the response's `iss`, exchanges the code, and
 the request is sent again with the token. A later 403 that asks for more
 scope runs it again for the union of scopes; a token from another
-authorization server is never reused.
+authorization server is never reused. When the access token expires, or a
+request gets 401, the provider first tries the refresh token it stored
+(the refresh grant, with the same client authentication and resource),
+and runs the full flow only if that fails.
 
 The client refuses an authorization server whose metadata does not list
 `S256` in `code_challenge_methods_supported` (`:allow-unadvertised-pkce?
