@@ -90,7 +90,9 @@
 ;;
 ;; :client :uri :endpoint :headers :token-provider :log :on-message :on-close
 ;; :state        {:session-id :version :initialize-id :session-stream
-;;                :stream-ready :list-id}
+;;                :stream-ready :list-id :initialize-message :stream-gen
+;;                :renewals}
+;; :renew-lock   held while a session the server no longer knows is renewed
 ;; :annotations  tool name -> its x-mcp-header annotations
 ;; :streams      request id -> {:body stream}, open POST event streams;
 ;;               closing one cancels its request
@@ -164,22 +166,34 @@
 
 (defn- session-stream!
   "The standalone stream an initialize-era server uses for requests and
-  notifications outside a request; stops when the server has none (405).
-  ready is delivered once the first attempt is answered, so later requests
-  can wait for it."
+  notifications outside a request. It is reopened when it ends or a
+  connection fails (backing off up to 30 s), and stops when the server
+  answers with anything but an event stream: 405 (no stream), or 404 (the
+  session is gone; the next request renews it). A renewal starts a new
+  stream, and the old loop stops. ready is delivered once the first
+  attempt is answered, so later requests can wait for it."
   [{:keys [closed state] :as conn} ready]
-  (future
-    (loop [seen {}]
-      (when-not @closed
-        (when-let [^HttpResponse resp (try (open-get conn (:last-event-id seen))
-                                           (catch Exception _ nil)
-                                           (finally (deliver ready true)))]
-          (swap! state assoc :session-stream (.body resp))
-          (let [more (try (read-events (.body resp) #(deliver! conn %)) (catch java.io.IOException _ {}))
-                seen (merge seen more)]
-            (when-not @closed
-              (Thread/sleep (long (or (:retry-ms seen) 1000)))
-              (recur seen))))))))
+  (let [gen (:stream-gen (swap! state update :stream-gen (fnil inc 0)))
+        current? #(and (not @closed) (= gen (:stream-gen @state)))]
+    (future
+      (loop [seen {} failures 0]
+        (when (current?)
+          (let [resp (try (open-get conn (:last-event-id seen))
+                          (catch Exception _ :presa.transport.http/failed)
+                          (finally (deliver ready true)))]
+            (cond
+              (= :presa.transport.http/failed resp)
+              (do (Thread/sleep (long (min 30000 (* 1000 (bit-shift-left 1 (min failures 5))))))
+                  (recur seen (inc failures)))
+
+              (some? resp)
+              (do (swap! state assoc :session-stream (.body ^HttpResponse resp))
+                  (let [more (try (read-events (.body ^HttpResponse resp) #(deliver! conn %))
+                                  (catch java.io.IOException _ {}))
+                        seen (merge seen more)]
+                    (when (current?)
+                      (Thread/sleep (long (or (:retry-ms seen) 1000)))
+                      (recur seen 0)))))))))))
 
 ;; Posting a message
 
@@ -293,9 +307,56 @@
           (when (and (some? id) (not (<= 200 status 299)))
             (deliver! conn (rpc/error id -32000 (str "HTTP " status) {"status" status})))))))
 
-(defn- post [conn message]
-  (when-let [resp (authorized-response conn message)]
-    (read-response! conn message resp)))
+(defn- consume!
+  "Read and close a response body."
+  [^HttpResponse resp]
+  (with-open [^java.io.InputStream in (.body resp)]
+    (slurp in :encoding "UTF-8")))
+
+(defn- renew-session!
+  "The server answered 404 to a request sent with session id stale: start
+  a new session with the client's own initialize message, as the spec
+  asks. Concurrent 404s renew once; one whose stale id was already
+  replaced only retries. The initialize response stays in the transport.
+  The new session has none of the old one's server-side state, such as
+  resource subscriptions or a log level. Whether the request can be sent
+  again on a session."
+  [{:keys [state renew-lock closed log] :as conn} stale]
+  (locking renew-lock
+    (cond
+      @closed false
+      (not= stale (:session-id @state)) (some? (:session-id @state))
+      :else
+      (let [init (:initialize-message @state)]
+        (swap! state dissoc :session-id)
+        (when-let [^java.io.InputStream s (:session-stream @state)]
+          (try (.close s) (catch Exception _)))
+        (when init
+          (let [n (:renewals (swap! state update :renewals (fnil inc 0)))
+                resp (try (authorized-response conn (assoc init "id" (str "presa-renew-" n)))
+                          (catch Exception e (log "session renewal failed: " (ex-message e)) nil))]
+            (when resp
+              (let [sid (response-header resp "mcp-session-id")
+                    ok? (and sid (= 200 (.statusCode ^HttpResponse resp)))]
+                (consume! resp)
+                (when ok?
+                  (swap! state assoc :session-id sid)
+                  (some-> (authorized-response conn (rpc/notification "notifications/initialized" {})) consume!)
+                  (session-stream! conn (promise))
+                  (log "renewed the session the server no longer knew")
+                  true)))))))))
+
+(defn- post [{:keys [state] :as conn} message]
+  (let [sid (:session-id @state)]
+    (when-let [^HttpResponse resp (authorized-response conn message)]
+      (if (and sid (= 404 (.statusCode resp)) (not= "initialize" (get message "method")))
+        (do (consume! resp)
+            (if (renew-session! conn sid)
+              (when-let [again (authorized-response conn message)]
+                (read-response! conn message again))
+              (when-let [id (get message "id")]
+                (deliver! conn (rpc/error id -32000 "HTTP 404" {"status" 404})))))
+        (read-response! conn message resp)))))
 
 (defn- list-tools!
   "Learn the tools' x-mcp-header annotations before calling one this
@@ -323,7 +384,7 @@
   (when @closed
     (throw (ex-info "The transport is closed" {:kind :closed})))
   (when (= "initialize" (get message "method"))
-    (swap! state assoc :initialize-id (get message "id")))
+    (swap! state assoc :initialize-id (get message "id") :initialize-message message))
   (if-let [{:keys [^java.io.InputStream body]}
            (and (= "notifications/cancelled" (get message "method"))
                 (get @streams (get-in message ["params" "requestId"])))]
@@ -412,6 +473,7 @@
                  :annotations (atom {})
                  :streams (atom {})
                  :closed (atom false)
-                 :answered (atom #{})}]
+                 :answered (atom #{})
+                 :renew-lock (Object.)}]
        {:send! (fn [message] (send! conn message))
         :close! (fn [] (close! conn))}))))
