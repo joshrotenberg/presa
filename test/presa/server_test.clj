@@ -219,3 +219,10 @@
     (testing "a keyword :content map is a result already"
       (is (= [{"type" "text" "text" "done"}] (get (call "ready") "content")))
       (is (not (contains? (call "ready") "structuredContent"))))))
+
+(deftest a-malformed-template-uri-is-not-found
+  (let [srv (server/server {:name "t" :version "1"
+                            :resource-templates [{:uri-template "file:///{name}" :name "file"
+                                                  :handler (fn [{:strs [name]} _] (str "file " name))}]})]
+    (is (= "file a b" (get-in (respond srv (req 1 "resources/read" {"uri" "file:///a%20b"})) ["result" "contents" 0 "text"])))
+    (is (= -32602 (get-in (respond srv (req 2 "resources/read" {"uri" "file:///%zz"})) ["error" "code"])))))
