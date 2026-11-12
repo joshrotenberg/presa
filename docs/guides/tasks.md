@@ -26,7 +26,7 @@ decides how a call runs:
 (def srv
   (server/server
    {:name "jobs" :version "1"
-    :tasks {:ttl-ms 3600000 :poll-interval-ms 20 :max-tasks 1000}
+    :tasks {:ttl-ms 3600000 :poll-interval-ms 20 :max-tasks 1000 :max-finished 1000}
     :tools [{:name "build" :description "Builds" :task :optional
              :handler (fn [{:strs [target]} ctx]
                         (if-let [r (server/input-response ctx "confirm")]
@@ -45,6 +45,9 @@ progress or log channel. `input-required` parks the task at
 `completed` with `isError`; an exception ends it `failed` with a -32603
 error that does not leak the exception. A task stays readable for its
 `ttlMs`, and belongs to the authenticated subject that created it.
+`:max-tasks` caps the tasks still running, and `:max-finished` the finished
+ones kept: past it the oldest finished tasks are dropped. A task waiting
+for input fails once its `ttlMs` passes.
 
 ## Client
 

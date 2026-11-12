@@ -34,10 +34,12 @@
 (defn store
   "A task store from the server's :tasks options:
   :ttl-ms (default 3600000), :poll-interval-ms (default 250), :max-tasks
-  (default 1000 tasks not yet terminal)."
-  [{:keys [ttl-ms poll-interval-ms max-tasks]
-    :or {ttl-ms 3600000 poll-interval-ms 250 max-tasks 1000}}]
+  (default 1000 tasks not yet terminal), :max-finished (default 1000
+  terminal tasks kept; past it the oldest are dropped)."
+  [{:keys [ttl-ms poll-interval-ms max-tasks max-finished]
+    :or {ttl-ms 3600000 poll-interval-ms 250 max-tasks 1000 max-finished 1000}}]
   {:tasks (atom {}) :ttl-ms ttl-ms :poll-interval-ms poll-interval-ms :max-tasks max-tasks
+   :max-finished max-finished
    ;; (fn [task]) called after each change of a task, for status notifications
    :on-change (atom nil)})
 
@@ -56,12 +58,24 @@
 (defn- expired? [{:keys [created-at ttl-ms]} now]
   (and ttl-ms (> now (+ created-at ttl-ms))))
 
+(defn- prune
+  "m without its expired tasks, and without its oldest terminal tasks past
+  max-finished."
+  [m now max-finished]
+  (let [live (into {} (remove (fn [[_ t]] (expired? t now))) m)
+        finished (filter (comp terminal :status val) live)
+        excess (- (count finished) (or max-finished Long/MAX_VALUE))]
+    (if (pos? excess)
+      (apply dissoc live (map key (take excess (sort-by (comp :updated-at val) finished))))
+      live)))
+
 (defn- reap!
-  "Forget the tasks past their TTL, cancelling the work of those not yet
-  terminal: once forgotten, nothing can update or cancel them."
+  "Forget the tasks past their TTL and the oldest finished ones past
+  :max-finished, cancelling the work of those not yet terminal: once
+  forgotten, nothing can update or cancel them."
   [st]
   (let [now (now-ms)
-        [before after] (swap-vals! (:tasks st) (fn [m] (into {} (remove (fn [[_ t]] (expired? t now))) m)))]
+        [before after] (swap-vals! (:tasks st) #(prune % now (:max-finished st)))]
     (doseq [[id t] before
             :when (and (not (contains? after id)) (not (terminal (:status t))))]
       (some-> (:work t) future-cancel))))
@@ -87,6 +101,7 @@
   "The task with id visible to scope, or nil when there is none, it has
   expired, or it belongs to another scope."
   [st id scope]
+  (reap! st)
   (when-let [t (get @(:tasks st) id)]
     (when (and (= scope (:scope t)) (not (expired? t (now-ms))))
       t)))

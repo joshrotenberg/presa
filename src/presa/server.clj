@@ -134,7 +134,8 @@
   - :default-scopes  the scopes of a component without an entry (default [])
   - :tasks  options that turn on the Tasks extension
       (io.modelcontextprotocol/tasks): {:ttl-ms 3600000 :poll-interval-ms 250
-      :max-tasks 1000}. A tool's :task policy (:sync, the default,
+      :max-tasks 1000 :max-finished 1000}; finished tasks past :max-finished
+      are dropped oldest first. A tool's :task policy (:sync, the default,
       :optional, :required, or (fn [params context]) returning one) decides
       whether a call from a client that declares Tasks becomes a task; see
       docs/tasks-extension.md
