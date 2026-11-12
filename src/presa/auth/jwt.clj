@@ -161,22 +161,36 @@
     (get (json/read-str (.body resp)) "keys")))
 
 (defn- jwks-source
-  "A function of kid that returns the public key, fetching url at first use
-  and again for an unknown kid, at most once per refresh-ms."
-  [url refresh-ms]
-  (let [cache (atom {:keys {} :fetched 0})
-        refresh! (fn []
-                   (let [ks (fetch-jwks url)]
-                     (reset! cache {:fetched (System/currentTimeMillis)
-                                    :keys (into {} (keep (fn [jwk]
-                                                           (when-let [k (try (jwk->public-key jwk) (catch Exception _ nil))]
-                                                             [(get jwk "kid") {:key k :alg (get jwk "alg")}])))
-                                                ks)})))]
+  "A function of kid that returns the public key from the JWKS at url. The
+  document is fetched at first use, for an unknown kid, and when it is older
+  than max-age-ms; attempts are at least refresh-ms apart, succeed or fail,
+  and one runs at a time. A successful fetch replaces the keys, dropping
+  removed ones; a failed one keeps them."
+  [url refresh-ms max-age-ms]
+  (let [cache (atom {:keys {} :fetched nil :attempted nil})
+        lock (Object.)
+        since (fn [t now] (if t (- now t) Long/MAX_VALUE))
+        wanted? (fn [kid now]
+                  (let [{:keys [keys fetched attempted]} @cache]
+                    (and (> (since attempted now) refresh-ms)
+                         (or (not (contains? keys kid)) (> (since fetched now) max-age-ms)))))
+        refresh! (fn [kid]
+                   (locking lock
+                     ;; a thread that waited here finds the fetch already done
+                     (let [now (System/currentTimeMillis)]
+                       (when (wanted? kid now)
+                         (swap! cache assoc :attempted now)
+                         (when-let [ks (try (fetch-jwks url) (catch Exception _ nil))]
+                           (swap! cache assoc
+                                  :fetched (System/currentTimeMillis)
+                                  :keys (into {} (keep (fn [jwk]
+                                                         (when-let [k (try (jwk->public-key jwk) (catch Exception _ nil))]
+                                                           [(get jwk "kid") {:key k :alg (get jwk "alg")}])))
+                                              ks)))))))]
     (fn [kid]
-      (or (get-in @cache [:keys kid])
-          (when (> (- (System/currentTimeMillis) (:fetched @cache)) refresh-ms)
-            (try (refresh!) (catch Exception _ nil))
-            (get-in @cache [:keys kid]))))))
+      (when (wanted? kid (System/currentTimeMillis))
+        (refresh! kid))
+      (get-in @cache [:keys kid]))))
 
 ;; The verifier
 
@@ -193,28 +207,33 @@
   - :audience  the accepted aud values, a string or a collection (required:
                the resource's canonical URI)
   - :issuer    the expected iss (recommended)
-  - :jwks-url  a JWKS document of RS256 or ES256 keys, fetched at first use
-               and again for an unknown kid at most once per :refresh-ms
-               (default 60000)
+  - :jwks-url  a JWKS document of RS256 or ES256 keys, fetched at first use,
+               for an unknown kid, and once it is older than :max-age-ms
+               (default 3600000), at most once per :refresh-ms (default
+               60000) and one fetch at a time. A refetch drops keys the
+               document no longer lists; a failed one keeps the cached keys
   - :keys      static keys instead: a map of kid to a JWK map or a
                java.security.PublicKey (a nil kid matches tokens without one)
   - :secret    an HS256 shared secret (string or bytes)
   - :leeway-s  clock skew allowed for exp and nbf, in seconds (default 0)
   - :require-exp?  refuse a token without a numeric exp (default true; RFC
                9068 requires exp in access tokens)
+  - :require-typ?  refuse a token whose header typ is not at+jwt (RFC 9068
+               section 4). Off by default: some issuers put typ JWT on their
+               access tokens
 
   The function returns {:subject :client-id :scopes :claims} for a valid
   token, or {:error kind :description text} with kind :invalid-token,
   :expired, :wrong-issuer or :wrong-audience."
-  [{:keys [audience issuer jwks-url keys secret leeway-s refresh-ms require-exp?]
-    :or {leeway-s 0 refresh-ms 60000 require-exp? true}}]
+  [{:keys [audience issuer jwks-url keys secret leeway-s refresh-ms max-age-ms require-exp? require-typ?]
+    :or {leeway-s 0 refresh-ms 60000 max-age-ms 3600000 require-exp? true}}]
   (when-not audience
     (throw (ex-info "A JWT verifier needs :audience" {:kind :invalid-input})))
   (let [accepted (audiences (if (string? audience) [audience] (vec audience)))
         static (into {} (map (fn [[kid k]] [kid {:key (if (map? k) (jwk->public-key k) k)
                                                  :alg (when (map? k) (get k "alg"))}]))
                      keys)
-        from-jwks (when jwks-url (jwks-source jwks-url refresh-ms))
+        from-jwks (when jwks-url (jwks-source jwks-url refresh-ms max-age-ms))
         secret (when secret (if (bytes? secret) secret (.getBytes (str secret) "UTF-8")))
         refuse (fn [kind description] {:error kind :description description})]
     (fn [token]
@@ -234,6 +253,8 @@
                 now (quot (System/currentTimeMillis) 1000)]
             (cond
               (not (and (map? header) (map? claims) signature)) (refuse :invalid-token "The token is malformed")
+              (and require-typ? (not (#{"at+jwt" "application/at+jwt"} (some-> (get header "typ") str str/lower-case))))
+              (refuse :invalid-token "The token is not a JWT access token (typ at+jwt)")
               (nil? key) (refuse :invalid-token "No key verifies this token")
               (not (verify-signature alg key (.getBytes (str h "." p) "UTF-8") signature))
               (refuse :invalid-token "The token signature is invalid")

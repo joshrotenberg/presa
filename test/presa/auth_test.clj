@@ -216,6 +216,56 @@
         (is (= #{"ada"} @interrupted)))
       (finally (stop!)))))
 
+(defn- jwks-server
+  "An HTTP server answering with (respond), counting requests in served."
+  [respond served]
+  (let [srv (org.httpkit.server/run-server (fn [_] (swap! served inc) (respond))
+                                           {:port 0 :ip "127.0.0.1" :legacy-return-value? false})]
+    {:url (str "http://127.0.0.1:" (org.httpkit.server/server-port srv) "/jwks")
+     :stop! #(deref (org.httpkit.server/server-stop! srv))}))
+
+(defn- jwks-body [& kid-pairs]
+  {:status 200 :headers {"content-type" "application/json"}
+   :body (json/write-str {"keys" (vec (for [[kid pair] (partition 2 kid-pairs)]
+                                        (assoc (jwt/public-key->jwk (.getPublic pair)) "kid" kid "alg" "RS256")))})})
+
+(deftest jwks-refresh
+  (let [rsa (rsa-pair)
+        tok (fn [kid pair & [opts]] (jwt/sign {"sub" "s" "aud" "x" "exp" (+ now 600)}
+                                              (merge {:alg "RS256" :kid kid :key (.getPrivate pair)} opts)))]
+    (testing "a failing JWKS URL is fetched once per refresh interval, not per request"
+      (let [served (atom 0)
+            {:keys [url stop!]} (jwks-server (fn [] {:status 500 :body "down"}) served)
+            v (jwt/verifier {:audience "x" :jwks-url url :refresh-ms 60000})]
+        (try
+          (dotimes [_ 5] (is (= :invalid-token (:error (v (tok "k1" rsa))))))
+          (is (= 1 @served))
+          (finally (stop!)))))
+    (testing "a key removed from the document stops verifying after :max-age-ms"
+      (let [served (atom 0)
+            rsa2 (rsa-pair)
+            doc (atom (jwks-body "k1" rsa))
+            {:keys [url stop!]} (jwks-server (fn [] @doc) served)
+            v (jwt/verifier {:audience "x" :jwks-url url :refresh-ms 10 :max-age-ms 100})]
+        (try
+          (is (= "s" (:subject (v (tok "k1" rsa)))))
+          (reset! doc (jwks-body "k2" rsa2))
+          (Thread/sleep 200)
+          (is (= :invalid-token (:error (v (tok "k1" rsa)))) "the rotated-out key is gone")
+          (is (= "s" (:subject (v (tok "k2" rsa2)))) "the new key verifies")
+          (testing "a failed refetch keeps the keys it has"
+            (reset! doc {:status 500 :body "down"})
+            (Thread/sleep 200)
+            (is (= "s" (:subject (v (tok "k2" rsa2))))))
+          (finally (stop!)))))
+    (testing ":require-typ? refuses tokens that are not at+jwt"
+      (let [strict (jwt/verifier {:audience "x" :keys {"k1" (.getPublic rsa)} :require-typ? true})
+            lenient (jwt/verifier {:audience "x" :keys {"k1" (.getPublic rsa)}})]
+        (is (= "s" (:subject (strict (tok "k1" rsa)))) "sign's default typ is at+jwt")
+        (is (= "s" (:subject (strict (tok "k1" rsa {:typ "application/at+jwt"})))))
+        (is (= :invalid-token (:error (strict (tok "k1" rsa {:typ "JWT"})))))
+        (is (= "s" (:subject (lenient (tok "k1" rsa {:typ "JWT"})))) "off by default")))))
+
 (deftest jwt-hs256-leeway-none-and-jwks-failure
   (let [aud "https://mcp.example.com/mcp"
         secret "a-shared-secret-of-adequate-length"
