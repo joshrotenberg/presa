@@ -170,7 +170,13 @@
       (let [lock (Object.)
             streaming (atom false)
             closed (atom false)
-            gone (promise)
+            ;; stop! ends the exchange early: set once work exists, it is
+            ;; idempotent through closed
+            stop (atom nil)
+            gone (atom false)
+            ;; A failed write is how http-kit learns of some disconnects;
+            ;; one before stop! exists is acted on when it is set.
+            client-gone! (fn [] (reset! gone true) (when-let [f @stop] (f)))
             emit! (fn [m]
                     (when-not (locking lock
                                 (or @closed
@@ -178,8 +184,7 @@
                                           (hk/send! ch {:status 200 :headers (merge sse-headers headers)} false)
                                           (reset! streaming true))
                                         (hk/send! ch (sse-event m) false))))
-                      ;; the write failed: the client has gone
-                      (deliver gone true)))
+                      (client-gone!)))
             outgoing (:outgoing session)
             client-request (when session
                              (fn [method params timeout-ms]
@@ -238,19 +243,16 @@
               (when (locking lock
                       (when (and @streaming (not @closed))
                         (or (hk/send! ch ": keepalive\n\n" false)
-                            (do (deliver gone true) false))))
+                            (do (client-gone!) false))))
                 (recur)))))
-        ;; A failed write is how http-kit learns of some disconnects.
-        (future
-          (when @gone
-            (when-not (locking lock (let [done @closed] (reset! closed true) done))
-              (when cancel! (cancel!))
-              (future-cancel work))))
-        (hk/on-close ch (fn [_]
-                          (when-not (locking lock (let [done @closed] (reset! closed true) done))
-                            ;; the client went away first: cancel its request
-                            (when cancel! (cancel!))
-                            (future-cancel work))))))}))
+        (let [stop! (fn []
+                      (when-not (locking lock (let [done @closed] (reset! closed true) done))
+                        ;; the client went away first: cancel its request
+                        (when cancel! (cancel!))
+                        (future-cancel work)))]
+          (reset! stop stop!)
+          (when @gone (stop!))
+          (hk/on-close ch (fn [_] (stop!))))))}))
 
 (def default-max-body-bytes
   "The largest request body the server reads unless :max-body-bytes says

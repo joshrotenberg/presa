@@ -190,6 +190,54 @@
                 (is (= "region eu west" (client/text (client/call-tool c "region" {"region" "eu west"}))))))
             (finally (client/close c))))))))
 
+(defn- future-threads
+  "Live threads of the pool futures run on (clojure-agent-send-off-pool on
+  the JVM, CLI-agent-send-off-pool in Babashka)."
+  []
+  (count (filter #(str/includes? (.getName ^Thread %) "agent-send-off-pool")
+                 (keys (Thread/getAllStackTraces)))))
+
+(deftest requests-release-their-threads
+  (with-server [s {}]
+    (let [c (client/connect (http/url (:url s)))]
+      (try
+        (client/call-tool c "echo" {"text" "warm"})
+        (let [before (future-threads)]
+          (dotimes [i 50] (client/call-tool c "echo" {"text" (str i)}))
+          (is (< (- (future-threads) before) 10) "50 requests leave no thread behind"))
+        (finally (client/close c))))))
+
+(deftest a-client-that-goes-away-cancels-its-request
+  (let [started (promise)
+        interrupted (promise)
+        s (http/serve! (server/server {:name "t" :version "1"
+                                       :tools [{:name "wait"
+                                                :handler (fn [_ _]
+                                                           (deliver started true)
+                                                           (try (Thread/sleep 10000)
+                                                                (catch InterruptedException _ (deliver interrupted true)))
+                                                           "late")}]})
+                       {})]
+    (try
+      (let [uri (URI. (:url s))
+            body (json/write-str (request 1 "tools/call" {"name" "wait"}))
+            sock (java.net.Socket. (.getHost uri) (.getPort uri))]
+        (doto (.getOutputStream sock)
+          (.write (.getBytes (str "POST " (.getPath uri) " HTTP/1.1\r\n"
+                                  "Host: " (.getHost uri) ":" (.getPort uri) "\r\n"
+                                  "Content-Type: application/json\r\n"
+                                  "Accept: application/json, text/event-stream\r\n"
+                                  "Mcp-Protocol-Version: 2026-07-28\r\n"
+                                  "Mcp-Method: tools/call\r\nMcp-Name: wait\r\n"
+                                  "Content-Length: " (count (.getBytes body "UTF-8")) "\r\n\r\n"
+                                  body)
+                             "UTF-8"))
+          (.flush))
+        (is (true? (deref started 5000 false)) "the handler ran")
+        (.close sock)
+        (is (true? (deref interrupted 5000 false)) "closing the connection interrupted the handler"))
+      (finally ((:stop! s))))))
+
 (deftest header-values
   (is (= "plain value" (http/encode-header-value "plain value")))
   (is (= "true" (http/encode-header-value true)))
