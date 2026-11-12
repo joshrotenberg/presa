@@ -132,7 +132,7 @@
   "Settle a session from an initialize request: [session respond]. With
   :list-changed, the session hears list changes through notify for as long
   as it lasts (see `close-session!`)."
-  [srv params notify]
+  [srv session params notify]
   (let [requested (get params "protocolVersion")
         capabilities (get params "capabilities")
         client-info (get params "clientInfo")]
@@ -146,6 +146,9 @@
                     "initialize requires protocolVersion, capabilities and clientInfo")))
     (let [version (negotiate srv requested)
           session-id (str (java.util.UUID/randomUUID))]
+      ;; a new session replaces the connection's old one and what it listened to
+      (when-let [old (:session-id session)]
+        (swap! (:listeners srv) (fn [m] (into {} (remove (fn [[k _]] (and (vector? k) (= old (first k))))) m))))
       (when (and (:list-changed srv) notify)
         (swap! (:listeners srv) assoc [session-id :list-changed]
                {:kinds #{"tools" "prompts" "resources"}
@@ -180,7 +183,7 @@
           [session (fn [] (shape srv context method params (f srv params context)))])
 
         (= "initialize" method)
-        (initialize srv params (or (:session-notify extra) (:notify extra)))
+        (initialize srv session params (or (:session-notify extra) (:notify extra)))
 
         (and (= "ping" method) (seq (legacy-versions srv)))
         [session (constantly {})]
