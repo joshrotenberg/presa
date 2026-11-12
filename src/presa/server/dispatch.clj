@@ -202,18 +202,23 @@
                                                      (when-let [t (match-template srv uri)]
                                                        (required-scopes srv :resource-template (:uri-template t)))
                                                      (:default-scopes srv)))})))
-          (when (and (= "resources/subscribe" method)
-                     (not (contains? @(:listeners srv) [(:session-id session) uri]))
-                     (>= (count (filter #(and (vector? %) (= (:session-id session) (first %))) (keys @(:listeners srv))))
-                         max-session-subscriptions))
-            (throw (error :invalid-params (str "A session may subscribe to at most " max-session-subscriptions " URIs"))))
           (if (= "resources/subscribe" method)
-            (swap! (:listeners srv) assoc [(:session-id session) uri]
-                   {:kinds #{}
-                    :auth (:auth extra)
-                    :uris [uri]
-                    :send (let [notify (or (:session-notify extra) (:notify extra))]
-                            (fn [method params] (notify (rpc/notification method (not-empty params)))))})
+            (let [k [(:session-id session) uri]
+                  ;; the session's URI subscriptions, not its list-change entry
+                  uri-key? #(and (vector? %) (= (:session-id session) (first %)) (string? (second %)))
+                  entry {:kinds #{}
+                         :auth (:auth extra)
+                         :uris [uri]
+                         :send (let [notify (or (:session-notify extra) (:notify extra))]
+                                 (fn [method params] (notify (rpc/notification method (not-empty params)))))}
+                  ;; check and register in one step
+                  after (swap! (:listeners srv)
+                               (fn [m] (if (or (contains? m k)
+                                               (< (count (filter uri-key? (keys m))) max-session-subscriptions))
+                                         (assoc m k entry)
+                                         m)))]
+              (when-not (contains? after k)
+                (throw (error :invalid-params (str "A session may subscribe to at most " max-session-subscriptions " URIs")))))
             (swap! (:listeners srv) dissoc [(:session-id session) uri]))
           [session (constantly {})])
 

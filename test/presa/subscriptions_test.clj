@@ -100,24 +100,26 @@
         [session] (server/handle srv {} (rpc/request 0 "initialize" {"protocolVersion" "2025-11-25" "capabilities" {}
                                                                      "clientInfo" {"name" "c" "version" "0"}})
                                  {:notify notify})
-        call (fn [message] (second (server/handle srv session message {:notify notify})))]
+        call (fn [message] (second (server/handle srv session message {:notify notify})))
+        ;; notifications go out on each listener's own queue
+        settled (fn [] (loop [n 0] (let [v @sent] (Thread/sleep 50) (if (or (= v @sent) (> n 40)) v (recur (inc n))))))]
     (testing "list changes reach the session without a subscription"
       (server/list-changed! srv "tools")
-      (is (= [{"jsonrpc" "2.0" "method" "notifications/tools/list_changed"}] @sent)))
+      (is (= [{"jsonrpc" "2.0" "method" "notifications/tools/list_changed"}] (settled))))
     (testing "resources/subscribe and unsubscribe"
       (reset! sent [])
       (is (= {} (get (call (rpc/request 1 "resources/subscribe" {"uri" "file:///docs"})) "result")))
       (server/resource-updated! srv "file:///docs")
-      (is (= [{"jsonrpc" "2.0" "method" "notifications/resources/updated" "params" {"uri" "file:///docs"}}] @sent))
+      (is (= [{"jsonrpc" "2.0" "method" "notifications/resources/updated" "params" {"uri" "file:///docs"}}] (settled)))
       (is (= {} (get (call (rpc/request 2 "resources/unsubscribe" {"uri" "file:///docs"})) "result")))
       (reset! sent [])
       (server/resource-updated! srv "file:///docs")
-      (is (= [] @sent)))
+      (is (= [] (settled))))
     (testing "closing the session forgets it"
       (server/close-session! srv session)
       (reset! sent [])
       (server/list-changed! srv "tools")
-      (is (= [] @sent)))))
+      (is (= [] (settled))))))
 
 (deftest initialize-era-http-sessions-hear-changes-on-their-stream
   (let [srv (make-server ["2026-07-28" "2025-11-25"])
@@ -152,3 +154,25 @@
     (is (= 1 (count (filter #(= "notifications/tools/list_changed" (get % "method")) @sent))))
     (close!)
     (is (empty? @(:listeners srv)) "nothing is left once the connection closes")))
+
+(deftest a-slow-listener-does-not-hold-up-the-caller
+  (let [srv (server/server {:name "t" :version "1" :versions protocol/versions :list-changed true
+                            :tools [{:name "a" :handler (fn [_ _] "a")}]})
+        slow (fn [_] (Thread/sleep 2000))]
+    (server/handle srv {} (rpc/request 0 "initialize" {"protocolVersion" "2025-11-25" "capabilities" {}
+                                                       "clientInfo" {"name" "c" "version" "0"}})
+                   {:notify slow})
+    (let [t0 (System/currentTimeMillis)]
+      (server/add-tool! srv {:name "b" :handler (fn [_ _] "b")})
+      (is (< (- (System/currentTimeMillis) t0) 500) "add-tool! returns while the listener is still busy"))))
+
+(deftest the-subscribe-cap-counts-uris-only
+  (let [srv (server/server {:name "t" :version "1" :versions protocol/versions :list-changed true :subscribe true
+                            :resource-templates [{:uri-template "x:/{id}" :name "x" :handler (fn [{:strs [id]} _] id)}]})
+        [session] (server/handle srv {} (rpc/request 0 "initialize" {"protocolVersion" "2025-11-25" "capabilities" {}
+                                                                     "clientInfo" {"name" "c" "version" "0"}})
+                                 {:notify (fn [_])})
+        sub (fn [i] (second (server/handle srv session (rpc/request i "resources/subscribe" {"uri" (str "x:/" i)}) {:notify (fn [_])})))
+        cap @(requiring-resolve 'presa.server.subscriptions/max-session-subscriptions)]
+    (is (every? #(contains? (sub %) "result") (range 1 (inc cap))) (str "all " cap " subscriptions are taken"))
+    (is (= -32602 (get-in (sub (inc cap)) ["error" "code"])) "one more is refused")))

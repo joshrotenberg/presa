@@ -56,11 +56,17 @@
           tag {sub-key id}
           listener-key (Object.)
           acked (promise)]
-      (when (>= (count (filter :stop (vals @(:listeners srv)))) (:max-subscriptions srv))
-        (throw (error :internal-error "Server subscription capacity exhausted" {"capacity" "subscriptions"})))
       ;; Register before acknowledging, so a stream acknowledged is a stream
       ;; end-subscriptions! can end; events wait for the acknowledgement,
-      ;; which stays the first message on the stream.
+      ;; which stays the first message on the stream. The capacity check and
+      ;; the registration are one step.
+      (swap! (:listeners srv)
+             (fn [m] (if (< (count (filter :stop (vals m))) (:max-subscriptions srv))
+                       ;; a placeholder that counts toward the capacity
+                       (assoc m listener-key {:stop (:stopped context)})
+                       m)))
+      (when-not (contains? @(:listeners srv) listener-key)
+        (throw (error :internal-error "Server subscription capacity exhausted" {"capacity" "subscriptions"})))
       (swap! (:listeners srv) assoc listener-key
              {:kinds kinds
               :uris uris

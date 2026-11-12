@@ -93,6 +93,9 @@
                        :cancelled? (fn [] (= "cancelled" (:status (get @(:tasks st) id))))))
         work (future (run-task srv st id tool arguments ctx))]
     (tasks/set-work! st id work)
+    ;; a cancel that came before the work was recorded could not stop it
+    (when (= "cancelled" (:status (get @(:tasks st) id)))
+      (future-cancel work))
     {:presa.server/task-created task}))
 
 (defn require-tasks-declared! [context]
