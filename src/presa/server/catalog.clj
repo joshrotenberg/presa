@@ -92,14 +92,19 @@
 (defn completions? [srv]
   (boolean (some :complete (concat (:templates srv) (vals (:prompts srv))))))
 
-(defn capabilities [srv]
+(defn capabilities
+  "What srv advertises. A kind with no definitions is left out, except on a
+  :list-changed server, which can gain them later and must say so."
+  [srv]
   (cond-> {}
-    (seq (:tools srv)) (assoc "tools" (if (:list-changed srv) {"listChanged" true} {}))
-    (or (seq (:resources srv)) (seq (:templates srv)))
+    (or (seq (:tools srv)) (:list-changed srv))
+    (assoc "tools" (if (:list-changed srv) {"listChanged" true} {}))
+    (or (seq (:resources srv)) (seq (:templates srv)) (:list-changed srv))
     (assoc "resources" (cond-> {}
                          (:list-changed srv) (assoc "listChanged" true)
                          (:subscribe srv) (assoc "subscribe" true)))
-    (seq (:prompts srv)) (assoc "prompts" (if (:list-changed srv) {"listChanged" true} {}))
+    (or (seq (:prompts srv)) (:list-changed srv))
+    (assoc "prompts" (if (:list-changed srv) {"listChanged" true} {}))
     (completions? srv) (assoc "completions" {})
     (:logging srv) (assoc "logging" {})
     (:task-store srv) (assoc "extensions" {tasks/extension {}})))

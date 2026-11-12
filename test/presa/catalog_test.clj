@@ -92,3 +92,27 @@
           (is (= "eu" (client/text (client/call-tool c "region" {"region" "eu"})))))
         ((:stop! sub)))
       (finally (client/close c) (stop!)))))
+
+(deftest a-list-changed-server-that-starts-empty
+  (let [srv (server/server {:name "t" :version "1" :list-changed true})
+        discovered (second (server/handle srv {} (rpc/request 1 "server/discover" {"_meta" meta-2026})))]
+    (is (= {"tools" {"listChanged" true}
+            "prompts" {"listChanged" true}
+            "resources" {"listChanged" true}}
+           (get-in discovered ["result" "capabilities"])))
+    (is (= [] (get-in (second (server/handle srv {} (rpc/request 2 "tools/list" {"_meta" meta-2026})))
+                      ["result" "tools"]))
+        "tools/list answers an empty list")
+    (let [{:keys [url stop!]} (http/serve! srv)
+          c (client/connect (http/url url))
+          seen (atom [])]
+      (try
+        (let [sub (client/listen c {"toolsListChanged" true} #(swap! seen conj (get % "method")))]
+          (deref (:acknowledged sub) 2000 nil)
+          (server/add-tool! srv (tool "a"))
+          (is (loop [n 0] (cond (some #{"notifications/tools/list_changed"} @seen) true
+                                (> n 100) false
+                                :else (do (Thread/sleep 20) (recur (inc n)))))
+              "the first tool is announced")
+          ((:stop! sub)))
+        (finally (client/close c) (stop!))))))
