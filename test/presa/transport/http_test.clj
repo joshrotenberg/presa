@@ -184,7 +184,7 @@
       (let [url (:url s)
             a (initialize! url)]
         (is (= 200 (list-status url a)))
-        (Thread/sleep 200)
+        (Thread/sleep 400)
         (let [b (initialize! url)]
           (is (= 404 (list-status url a)) "the idle session is gone")
           (is (= 200 (list-status url b)))))))

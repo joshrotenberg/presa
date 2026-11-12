@@ -214,6 +214,12 @@
                        (server/prepare srv {} message opts))
             {:keys [respond request-id cancel!]} prepared
             _ (when on-session (on-session prepared))
+            ;; running is [registry key]: where a posted notifications/cancelled
+            ;; can find this request. It is registered before work starts, so
+            ;; work's finally always finds the entry to remove.
+            registered (when (some? request-id) running)
+            _ (when-let [[registry k] registered]
+                (swap! registry assoc k {:cancel! cancel!}))
             work (future
                    (binding [*out* *err*]
                      (try
@@ -233,13 +239,13 @@
                          (log "failed to answer a request: " (ex-message e))
                          (try (hk/close ch) (catch Throwable _)))
                        (finally
-                         (when-let [[registry k] (and (some? request-id) running)]
+                         (when-let [[registry k] registered]
                            (swap! registry dissoc k))
                          (when session (reset! (:last-seen session) (now-ms)))))))]
-        ;; running is [registry key]: where a posted notifications/cancelled
-        ;; can find this request
-        (when-let [[registry k] (and (some? request-id) running)]
-          (swap! registry assoc k {:cancel! cancel! :work work}))
+        ;; add work to the entry, unless work has already finished and
+        ;; removed it
+        (when-let [[registry k] registered]
+          (swap! registry (fn [m] (if (contains? m k) (assoc-in m [k :work] work) m))))
         (when (= "subscriptions/listen" (get message "method"))
           ;; keep idle subscription streams open through proxies
           (future
