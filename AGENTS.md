@@ -27,7 +27,8 @@ Run these before pushing; each must pass:
 - `bb jvm-test`
 - `bb lint` (clj-kondo and the conventions below)
 
-CI runs those, the jar build, the server conformance lanes (`bb conformance
+CI runs those (`bb test` on macOS too), the jar build and `bb smoke` (each
+namespace of the jar required under bb and on the JVM), the server conformance lanes (`bb conformance
 <revision>`, each against `conformance/baselines/<revision>.json`) and the
 client lanes (`bb conformance client <revision>`, against
 `client-<revision>.json`); see `conformance/README.md`.

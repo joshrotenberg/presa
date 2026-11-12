@@ -189,6 +189,7 @@ bb conformance client 2026-07-28 # its client leg against the client harness
 bb lint                          # clj-kondo, cljfmt, no em dashes, conventional commits since origin/main
 bb fmt                           # format the sources as bb lint checks them (cljfmt)
 clojure -T:build jar             # the jar a release deploys to Clojars
+bb smoke                         # require each namespace of that jar under bb and on the JVM
 ```
 
 ## License
