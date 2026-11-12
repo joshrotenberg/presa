@@ -73,7 +73,7 @@ Options of `handler` and `serve!`:
 | `:host`, `:port` (`serve!` only) | `127.0.0.1`, 0 | where to listen |
 | `:path` | `/mcp` | the endpoint |
 | `:allowed-origins` | loopback only | a set or predicate of other origins to accept (403 otherwise; guards against DNS rebinding) |
-| `:allowed-hosts` | any | a set or predicate of `Host` values to accept |
+| `:allowed-hosts` | loopback with `serve!` on a loopback `:host`, else any | a set or predicate of `Host` values to accept; `serve!` bound to a loopback address accepts only loopback `Host` values unless this is given, against DNS rebinding |
 | `:max-body-bytes` | 2000000 | a larger body gets 413 |
 | `:keepalive-ms` | 15000 | comments on idle subscription streams, which also find clients that left |
 | `:session-idle-ms` | 1800000 | an initialize-era session with nothing in flight and no GET stream is closed once unused this long |

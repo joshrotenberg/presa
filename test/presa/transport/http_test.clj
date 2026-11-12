@@ -445,3 +445,27 @@
                 (is (every? #(re-matches #"presa-tools-\d+-\d+" (str (:request-id %))) listing)))
               (finally (client/close c))))))
       (finally ((:stop! s))))))
+
+(defn- raw-status
+  "The status line's code for a POST with the given Host header, sent over a
+  plain socket (java.net.http will not set Host)."
+  [url host]
+  (let [uri (URI. url)
+        body (json/write-str (request 1 "tools/list" {}))]
+    (with-open [sock (java.net.Socket. (.getHost uri) (.getPort uri))]
+      (doto (.getOutputStream sock)
+        (.write (.getBytes (str "POST " (.getPath uri) " HTTP/1.1\r\nHost: " host "\r\n"
+                                "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+                                "Mcp-Protocol-Version: 2026-07-28\r\nMcp-Method: tools/list\r\n"
+                                "Connection: close\r\nContent-Length: " (count (.getBytes body "UTF-8")) "\r\n\r\n" body)
+                           "UTF-8"))
+        (.flush))
+      (parse-long (second (str/split (.readLine (java.io.BufferedReader. (java.io.InputStreamReader. (.getInputStream sock)))) #" "))))))
+
+(deftest a-loopback-server-checks-host
+  (with-server [s {}]
+    (is (= 403 (raw-status (:url s) "evil.example.com")) "a rebinding host is refused")
+    (is (= 200 (raw-status (:url s) (str "localhost:" (:port s)))))
+    (is (= 200 (raw-status (:url s) (str "127.0.0.1:" (:port s))))))
+  (with-server [s {:allowed-hosts #{"evil.example.com"}}]
+    (is (= 200 (raw-status (:url s) "evil.example.com")) ":allowed-hosts replaces the default")))

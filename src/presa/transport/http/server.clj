@@ -23,6 +23,16 @@
            (contains? loopback-hosts (.getHost u))))
     (catch Exception _ false)))
 
+(defn- loopback-host?
+  "Whether a Host header value names a loopback host, with or without a port."
+  [host]
+  (let [h (str/lower-case (str/trim (str host)))
+        name (cond
+               (str/starts-with? h "[") (subs h 0 (inc (max 0 (str/index-of h "]"))))
+               (str/includes? h ":") (subs h 0 (str/index-of h ":"))
+               :else h)]
+    (contains? loopback-hosts name)))
+
 (defn- allowed? [allow v]
   (cond (nil? allow) false
         (set? allow) (contains? allow v)
@@ -518,11 +528,15 @@
 
 (defn serve!
   "Serve srv over HTTP. Options are `handler`'s plus :host (default
-  \"127.0.0.1\") and :port (default 0, a free port). Returns {:port :url
-  :stop!}; (stop!) stops the server."
+  \"127.0.0.1\") and :port (default 0, a free port). Bound to a loopback
+  host without :allowed-hosts, it accepts only loopback Host headers, against
+  DNS rebinding. Returns {:port :url :stop!}; (stop!) stops the server."
   ([srv] (serve! srv {}))
   ([srv {:keys [host port path] :or {host "127.0.0.1" port 0 path "/mcp"} :as opts}]
-   (let [s (hk/run-server (handler srv opts)
+   (let [opts (cond-> opts
+                (and (not (contains? opts :allowed-hosts)) (contains? loopback-hosts host))
+                (assoc :allowed-hosts loopback-host?))
+         s (hk/run-server (handler srv opts)
                           {:ip host :port port :legacy-return-value? false
                            ;; presa checks the size itself, with a JSON-RPC body
                            :max-body (+ 65536 (or (:max-body-bytes opts) default-max-body-bytes))})
