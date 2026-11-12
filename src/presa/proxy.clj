@@ -267,11 +267,28 @@
   (when-let [dups (seq (for [[k n] (frequencies ks) :when (> n 1)] k))]
     (throw (ex-info (str "Backends share " kind ": " (vec dups)) {:kind :invalid-input kind (vec dups)}))))
 
+(def ^:private kinds
+  "Each kind of definition: its catalog key and the key that names it."
+  [[:tools :name "tool"] [:prompts :name "prompt"] [:resources :uri "resource"]
+   [:templates :uri-template "resource template"]])
+
+(defn- without-taken
+  "now without the definitions whose names others (catalogs of the other
+  backends) already have; each one skipped is logged."
+  [now others log]
+  (reduce (fn [now [k key-fn what]]
+            (let [taken (set (map key-fn (mapcat k others)))
+                  {skipped true kept false} (group-by #(contains? taken (key-fn %)) (get now k))]
+              (doseq [d skipped]
+                (log "proxy: skipped " what " " (key-fn d) ", which another backend already has"))
+              (assoc now k (vec kept))))
+          now kinds))
+
 (defn- sync!
-  "Bring srv's definitions from backend in line with what it lists now."
-  [srv previous backend]
-  (let [now (catalog backend)
-        swap-defs (fn [k key-fn add! remove!]
+  "Bring srv's definitions from a backend in line with now, what it lists
+  now; previous is what it listed before."
+  [srv previous now]
+  (let [swap-defs (fn [k key-fn add! remove!]
                     (let [old (set (map key-fn (get previous k)))
                           new (set (map key-fn (get now k)))]
                       (doseq [gone (remove new old)] (remove! srv gone))
@@ -291,9 +308,15 @@
   closes their clients.
 
   Prefixed tool and prompt names, resource URIs and template URIs must not
-  collide across backends."
+  collide across backends. When a backend's list changes, its definitions
+  are fetched again, one fetch at a time per backend; one whose name
+  another backend already has is skipped and logged. :log in opts is
+  (fn [& parts]) for that and for failed fetches (default: a line on
+  stderr)."
   [backends opts]
-  (let [parked (atom {})
+  (let [log (or (:log opts) (fn [& parts] (binding [*out* *err*] (println (apply str parts)))))
+        opts (dissoc opts :log)
+        parked (atom {})
         backends (vec (map-indexed (fn [i b] (assoc b ::index i ::parked parked)) backends))
         catalogs (atom (into {} (map (fn [b] [(::index b) (catalog b)])) backends))
         all (fn [k] (mapcat k (vals @catalogs)))]
@@ -307,10 +330,26 @@
                                           :resources (vec (all :resources))
                                           :resource-templates (vec (all :templates))}))
           resync! (fn [b]
-                    ;; sync! changes srv, so it runs once, outside swap!
-                    (try (let [now (sync! srv (get @catalogs (::index b)) b)]
-                           (swap! catalogs assoc (::index b) now))
-                         (catch Exception _ nil)))
+                    (try (let [i (::index b)
+                               now (without-taken (catalog b) (vals (dissoc @catalogs i)) log)]
+                           ;; sync! changes srv, so it runs once, outside swap!
+                           (sync! srv (get @catalogs i) now)
+                           (swap! catalogs assoc i now))
+                         (catch Exception e
+                           (log "proxy: could not refetch a backend's definitions: " (or (ex-message e) (class e))))))
+          ;; per backend :idle, :running, or :dirty (running, and changed
+          ;; again since it began): resyncs of a backend never overlap, and
+          ;; a burst of changes collapses into one more
+          states (vec (repeatedly (count backends) #(atom :idle)))
+          request-resync! (fn [b]
+                            (let [st (states (::index b))
+                                  [before _] (swap-vals! st {:idle :running :running :dirty :dirty :dirty})]
+                              (when (= :idle before)
+                                (future
+                                  (loop []
+                                    (resync! b)
+                                    (let [[before _] (swap-vals! st {:dirty :running :running :idle})]
+                                      (when (= :dirty before) (recur))))))))
           listeners (vec (for [{:keys [client] :as b} backends
                                :let [caps (:server-capabilities (client/info client))]
                                :when (and (= "2026-07-28" (:version (client/info client)))
@@ -319,7 +358,7 @@
                                           {"toolsListChanged" true "promptsListChanged" true "resourcesListChanged" true}
                                           (fn [{:strs [method]}]
                                             (when (re-find #"/list_changed$" (str method))
-                                              (future (resync! b)))))))]
+                                              (request-resync! b))))))]
       {:server srv
        :close! (fn []
                  (doseq [l listeners] ((:stop! l)))

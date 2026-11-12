@@ -223,3 +223,21 @@
                                            (catch Exception e e))))))
       (is (true? (deref stopped 3000 false)) "the backend's call ended, long before its 30 s timeout")
       (finally (deliver never {"action" "cancel"}) (client/close c) (close!)))))
+
+(deftest resyncs-keep-names-unique-and-follow-bursts
+  (let [a (server/server {:name "a" :version "1" :list-changed true :tools [{:name "x" :handler (fn [_ _] "from a")}]})
+        b (server/server {:name "b" :version "1" :list-changed true :tools [{:name "y" :handler (fn [_ _] "from b")}]})
+        logs (atom [])
+        {:keys [server close!]} (proxy/proxy-server [{:prefix "p" :client (connect a)} {:prefix "p" :client (connect b)}]
+                                                    {:name "front" :version "1" :log (fn [& parts] (swap! logs conj (apply str parts)))})
+        c (client/connect (client/in-process server))
+        eventually (fn [f] (loop [n 0] (cond (f) true (> n 100) false :else (do (Thread/sleep 20) (recur (inc n))))))]
+    (try
+      (testing "a name another backend has is skipped and logged"
+        (server/add-tool! b {:name "x" :handler (fn [_ _] "b's x")})
+        (is (eventually #(some (fn [l] (clojure.string/includes? l "p_x")) @logs)) (str @logs))
+        (is (= "from a" (client/text (client/call-tool c "p_x")))))
+      (testing "a burst of changes all arrive"
+        (dotimes [i 20] (server/add-tool! a {:name (str "t" i) :handler (fn [_ _] "t")}))
+        (is (eventually #(= 20 (count (filter (fn [t] (re-matches #"p_t\d+" (get t "name"))) (client/list-tools c)))))))
+      (finally (client/close c) (close!)))))
