@@ -223,18 +223,27 @@
             work (future
                    (binding [*out* *err*]
                      (try
-                       (let [response (respond)]
+                       (let [response (respond)
+                             reply (fn [response]
+                                     (cond
+                                       @streaming (if response
+                                                    (hk/send! ch (sse-event response) true)
+                                                    (hk/close ch))
+                                       response (hk/send! ch (update (json-response (error-status response stateless?) response)
+                                                                     :headers merge headers)
+                                                          true)
+                                       :else (hk/send! ch {:status 204 :headers headers} true)))]
                          (locking lock
                            (when-not @closed
                              (reset! closed true)
-                             (cond
-                               @streaming (if response
-                                            (hk/send! ch (sse-event response) true)
-                                            (hk/close ch))
-                               response (hk/send! ch (update (json-response (error-status response stateless?) response)
-                                                             :headers merge headers)
-                                                  true)
-                               :else (hk/send! ch {:status 204 :headers headers} true)))))
+                             (try (reply response)
+                                  (catch Throwable e
+                                    ;; writing JSON fails before anything is sent, so
+                                    ;; the request can still be answered
+                                    (log "failed to write a response: " (ex-message e))
+                                    (reply (rpc/error (get response "id") :internal-error
+                                                      (str "Internal error: the response could not be written: "
+                                                           (ex-message e)))))))))
                        (catch Throwable e
                          (log "failed to answer a request: " (ex-message e))
                          (try (hk/close ch) (catch Throwable _)))

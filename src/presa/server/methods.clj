@@ -110,7 +110,8 @@
           (start-task! srv tool arguments context)
           (let [v (try
                     (run-handler context #((:handler tool) arguments %))
-                    (catch Exception e
+                    ;; Throwable: an assert or a stack overflow is a tool error too
+                    (catch Throwable e
                       (if (:presa/error (ex-data e))
                         (throw e)
                         (do (emit! srv {:event :tool/error :tool tool-name :request-id (:request-id context)
