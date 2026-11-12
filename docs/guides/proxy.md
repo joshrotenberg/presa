@@ -41,7 +41,7 @@ under a prefix, and its resources and templates under their own URIs.
 | log messages | the backend's messages about a call, through `server/log!`, so the caller's level applies (the proxy turns `:logging` on unless its options say otherwise) |
 | input from a 2026-07-28 backend | its `input_required` is passed to the caller; the backend's `requestState` rides in the proxy's signed state |
 | input from an initialize-era backend | the call is parked while the proxy asks the caller (below) |
-| list changes | a 2026-07-28 backend's list change resyncs the proxy and reaches the proxy's listeners; initialize-era backends are listed once, at start |
+| list changes | a 2026-07-28 backend's list change resyncs the proxy (one resync at a time per backend) and reaches the proxy's listeners; a new definition whose name another backend has is skipped and logged to `:log`; initialize-era backends are listed once, at start |
 | completion | argument completion for a backend's prompts and templates goes to that backend |
 | cancellation | a call the caller cancels (or times out on) is cancelled at the backend with `notifications/cancelled`, on every transport |
 
