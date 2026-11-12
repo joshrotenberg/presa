@@ -57,10 +57,14 @@
   (and ttl-ms (> now (+ created-at ttl-ms))))
 
 (defn- reap!
-  "Forget the tasks past their TTL."
+  "Forget the tasks past their TTL, cancelling the work of those not yet
+  terminal: once forgotten, nothing can update or cancel them."
   [st]
-  (let [now (now-ms)]
-    (swap! (:tasks st) (fn [m] (into {} (remove (fn [[_ t]] (expired? t now))) m)))))
+  (let [now (now-ms)
+        [before after] (swap-vals! (:tasks st) (fn [m] (into {} (remove (fn [[_ t]] (expired? t now))) m)))]
+    (doseq [[id t] before
+            :when (and (not (contains? after id)) (not (terminal (:status t))))]
+      (some-> (:work t) future-cancel))))
 
 (defn create!
   "Store a new working task for scope and return it, or nil when the store

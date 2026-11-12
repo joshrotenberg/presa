@@ -206,3 +206,23 @@
     (let [srv (make-server)]
       (is (= -32021 (get-in (call srv "subscriptions/listen" {"notifications" {"taskIds" ["x"]}} undeclared) ["error" "code"])))
       (is (= -32602 (get-in (call srv "subscriptions/listen" {"notifications" {"taskIds" "x"}} declared) ["error" "code"]))))))
+
+(deftest expired-tasks-release-their-threads
+  (let [srv (make-server {:tasks {:ttl-ms 300 :poll-interval-ms 20}})
+        work-of (fn [id] (get-in @(:tasks (:task-store srv)) [id :work]))]
+    (testing "a task waiting for input that never comes"
+      (let [id (get (result srv "tools/call" {"name" "two"} declared) "taskId")
+            _ (wait-status srv id "input_required")
+            work (work-of id)]
+        (is (some? work))
+        (is (loop [n 0] (cond (future-done? work) true
+                              (> n 100) false
+                              :else (do (Thread/sleep 50) (recur (inc n)))))
+            "the worker returns once the TTL passes")))
+    (testing "a working task past its TTL is cancelled when it is reaped"
+      (let [id (get (result srv "tools/call" {"name" "slow" "arguments" {"ms" 30000}} declared) "taskId")
+            work (work-of id)]
+        (Thread/sleep 400)
+        ;; creating a task reaps the expired ones
+        (result srv "tools/call" {"name" "slow" "arguments" {"ms" 1}} declared)
+        (is (future-cancelled? work))))))
