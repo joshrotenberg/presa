@@ -78,6 +78,7 @@ Options of `handler` and `serve!`:
 | `:keepalive-ms` | 15000 | comments on idle subscription streams, which also find clients that left |
 | `:session-idle-ms` | 1800000 | an initialize-era session with nothing in flight and no GET stream is closed once unused this long |
 | `:max-sessions` | 1000 | at this many initialize-era sessions, `initialize` gets 503 |
+| `:max-sessions-per-subject` | 100 | with `:auth`, at this many initialize-era sessions of one subject, that subject's `initialize` gets 503; without `:auth` there is no identity to cap by, so an exposed server needs a proxy's connection limits |
 | `:auth` | none | a resource-server config; see [authorization.md](authorization.md) |
 | `:cancellation` | none | `:subject` lets a posted cancel stop the same subject's request |
 | `:log` | none | `(fn [& parts])` for diagnostics |

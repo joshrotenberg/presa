@@ -331,6 +331,11 @@
   says otherwise."
   1000)
 
+(def default-max-sessions-per-subject
+  "How many initialize-era sessions one authenticated subject may hold,
+  with :auth, unless :max-sessions-per-subject says otherwise."
+  100)
+
 (defn handler
   "A ring handler serving srv. Options:
 
@@ -357,13 +362,17 @@
                       initialize arrives
   - :max-sessions     at this many initialize-era sessions, initialize gets
                       503 (default 1000)
+  - :max-sessions-per-subject  with :auth, at this many initialize-era
+                      sessions of one subject, that subject's initialize gets
+                      503 (default 100)
   - :log              (fn [& parts]) for diagnostics"
   ([srv] (handler srv {}))
   ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms max-body-bytes cancellation
-                session-idle-ms max-sessions]
+                session-idle-ms max-sessions max-sessions-per-subject]
          auth-config :auth
          :or {path "/mcp" log (fn [& _]) keepalive-ms 15000 max-body-bytes default-max-body-bytes
-              session-idle-ms default-session-idle-ms max-sessions default-max-sessions}}]
+              session-idle-ms default-session-idle-ms max-sessions default-max-sessions
+              max-sessions-per-subject default-max-sessions-per-subject}}]
    (let [sessions (atom {})
          ;; 2026-07-28 requests in flight by [subject id], for :cancellation :subject
          stateless-running (atom {})]
@@ -470,7 +479,11 @@
 
                      (and (= "initialize" method)
                           (do (sweep! srv sessions session-idle-ms)
-                              (>= (count @sessions) max-sessions)))
+                              (or (>= (count @sessions) max-sessions)
+                                  ;; one subject cannot fill the server
+                                  (when-let [subject (and auth-config (:subject (caller)))]
+                                    (>= (count (filter #(= subject (:subject %)) (vals @sessions)))
+                                        max-sessions-per-subject)))))
                      (json-response 503 (rpc/error (get message "id") :internal-error "Too many sessions"))
 
                      (= "initialize" method)
