@@ -79,8 +79,4 @@ release, scope checks were extended to completion and resource
 subscriptions, and the JWT verifier was made to require `exp`.
 
 Open work is filed as issues, labelled by priority and area:
-<https://github.com/joshrotenberg/presa/issues>. At the time of writing:
-
-| Issue | Priority |
-|---|---|
-| none open | |
+<https://github.com/joshrotenberg/presa/issues>.
