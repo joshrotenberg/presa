@@ -36,6 +36,8 @@
 ;; Server
 
 (defalias default-max-body-bytes server/default-max-body-bytes)
+(defalias default-session-idle-ms server/default-session-idle-ms)
+(defalias default-max-sessions server/default-max-sessions)
 (defalias handler server/handler)
 (defalias serve! server/serve!)
 
