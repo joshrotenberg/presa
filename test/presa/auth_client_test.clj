@@ -32,8 +32,9 @@
   "A small authorization server: metadata, DCR, authorize (redirects at
   once), token (a signed JWT). iss-mode is :correct, :wrong or :omit;
   state-mode is :correct or :wrong (the state echoed on the redirect);
-  methods is the advertised code_challenge_methods_supported."
-  [keypair _resource {:keys [iss-mode state-mode methods] :or {iss-mode :correct state-mode :correct methods ["S256"]}}]
+  methods is the advertised code_challenge_methods_supported (:omit leaves
+  it out); metadata is merged over the metadata document."
+  [keypair _resource {:keys [iss-mode state-mode methods metadata] :or {iss-mode :correct state-mode :correct methods ["S256"]}}]
   (let [port (promise)
         seen (atom [])
         ;; the scope an authorization request asked for, for its token
@@ -45,13 +46,15 @@
                     (case uri
                       "/.well-known/oauth-authorization-server"
                       {:status 200 :headers {"content-type" "application/json"}
-                       :body (json/write-str {"issuer" (issuer)
-                                              "authorization_endpoint" (str (issuer) "/authorize")
-                                              "token_endpoint" (str (issuer) "/token")
-                                              "registration_endpoint" (str (issuer) "/register")
-                                              "code_challenge_methods_supported" methods
-                                              "authorization_response_iss_parameter_supported" true
-                                              "token_endpoint_auth_methods_supported" ["client_secret_basic"]})}
+                       :body (json/write-str (cond-> (merge {"issuer" (issuer)
+                                                             "authorization_endpoint" (str (issuer) "/authorize")
+                                                             "token_endpoint" (str (issuer) "/token")
+                                                             "registration_endpoint" (str (issuer) "/register")
+                                                             "code_challenge_methods_supported" methods
+                                                             "authorization_response_iss_parameter_supported" true
+                                                             "token_endpoint_auth_methods_supported" ["client_secret_basic"]}
+                                                            metadata)
+                                               (= :omit methods) (dissoc "code_challenge_methods_supported")))}
                       "/register"
                       {:status 201 :headers {"content-type" "application/json"}
                        :body (json/write-str {"client_id" "dcr-client" "client_secret" "dcr-secret"})}
@@ -170,3 +173,25 @@
       (is (= "svc" (client/text (client/call-tool c "whoami"))))
       (is (not-any? #{[:get "/authorize"]} @(:seen as)))
       (finally (client/close c) ((:stop! rs)) ((:stop! as))))))
+
+(deftest pkce-and-https-requirements
+  (let [refused? (fn [as-opts provider-opts]
+                   (let [kp (rsa)
+                         as (auth-server kp nil as-opts)
+                         rs (protected-server (:issuer as) kp)]
+                     (try
+                       (let [e (try (client/connect (http/url (:url rs) {:token-provider (oauth/provider (merge {:resource (:url rs)
+                                                                                                                 :authorizer (oauth/redirect-reader)}
+                                                                                                                provider-opts))}))
+                                    nil
+                                    (catch Exception e e))]
+                         {:refused? (= -32000 (:code (ex-data e)))
+                          :asked? (some #{[:get "/authorize"] [:post "/token"]} @(:seen as))})
+                       (finally ((:stop! rs)) ((:stop! as))))))]
+    (testing "metadata that does not list code_challenge_methods_supported is refused"
+      (is (= {:refused? true :asked? nil} (refused? {:methods :omit} {}))))
+    (testing ":allow-unadvertised-pkce? proceeds without it"
+      (is (= {:refused? false :asked? [:get "/authorize"]}
+             (update (refused? {:methods :omit} {:allow-unadvertised-pkce? true}) :asked? #(when % [:get "/authorize"])))))
+    (testing "an http token endpoint on another host is refused before any request to it"
+      (is (= {:refused? true :asked? nil} (refused? {:metadata {"token_endpoint" "http://auth.example.com/token"}} {}))))))
