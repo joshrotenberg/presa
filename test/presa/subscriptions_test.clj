@@ -80,7 +80,7 @@
   (testing "a server without list-changed or subscribe has no subscriptions/listen"
     (let [srv (server/server {:name "t" :version "1" :tools [{:name "x" :handler (fn [_ _] "x")}]})]
       (is (= -32601 (get-in (second (server/handle srv {} (rpc/request 1 "subscriptions/listen"
-                                                                         {"notifications" {} "_meta" meta-2026})))
+                                                                       {"notifications" {} "_meta" meta-2026})))
                             ["error" "code"])))))
   (testing "malformed requests"
     (let [srv (make-server)
@@ -143,7 +143,7 @@
         sent (atom [])
         {:keys [receive! close!]} (connection/open srv {:send #(swap! sent conj %)})
         init (fn [id] (receive! (rpc/request id "initialize" {"protocolVersion" "2025-06-18" "capabilities" {}
-                                                             "clientInfo" {"name" "c" "version" "0"}})))]
+                                                              "clientInfo" {"name" "c" "version" "0"}})))]
     (init 1)
     (init 2)
     (Thread/sleep 200)

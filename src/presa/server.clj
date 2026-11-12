@@ -47,12 +47,10 @@
   unless the server's :max-progress-updates says otherwise."
   1000)
 
-
 (def max-log-messages
   "The most log messages one request sends; later ones are dropped,
   unless the server's :max-log-messages says otherwise."
   1000)
-
 
 (defn server
   "A server map from options:
@@ -190,52 +188,51 @@
         [prompts prompt-order] (index "prompt" :name (map prompt-def prompts))]
     (index "resource template" :uri-template templates)
     (let [srv {:info (cond-> {"name" name "version" version}
-             title (assoc "title" title))
-     :instructions instructions
+                       title (assoc "title" title))
+               :instructions instructions
      ;; the definitions, which add-tool! and friends change while serving;
      ;; each request reads one snapshot (see `snapshot`)
-     :catalog (atom {:tools tools
-                     :tool-order tool-order
-                     :resources resources
-                     :resource-order resource-order
-                     :templates templates
-                     :prompts prompts
-                     :prompt-order prompt-order
-                     :catalog-version {"tools" 0 "resources" 0 "prompts" 0}})
-     :page-size page-size
-     :logging (boolean logging)
-     :list-changed (boolean list-changed)
-     :subscribe (boolean subscribe)
-     :max-subscriptions max-subscriptions
+               :catalog (atom {:tools tools
+                               :tool-order tool-order
+                               :resources resources
+                               :resource-order resource-order
+                               :templates templates
+                               :prompts prompts
+                               :prompt-order prompt-order
+                               :catalog-version {"tools" 0 "resources" 0 "prompts" 0}})
+               :page-size page-size
+               :logging (boolean logging)
+               :list-changed (boolean list-changed)
+               :subscribe (boolean subscribe)
+               :max-subscriptions max-subscriptions
      ;; per request; nil is no cap
-     :max-progress-updates (get opts :max-progress-updates max-progress-updates)
-     :max-log-messages (get opts :max-log-messages max-log-messages)
-     :on-event on-event
-     :task-store (when tasks-opts (tasks/store tasks-opts))
-     :required-scopes (or required-scopes {})
-     :default-scopes (vec default-scopes)
+               :max-progress-updates (get opts :max-progress-updates max-progress-updates)
+               :max-log-messages (get opts :max-log-messages max-log-messages)
+               :on-event on-event
+               :task-store (when tasks-opts (tasks/store tasks-opts))
+               :required-scopes (or required-scopes {})
+               :default-scopes (vec default-scopes)
      ;; open subscriptions/listen streams, by a key of their own
-     :listeners (atom {})
-     :validate? (boolean validate?)
-     :keywordize-args? (boolean keywordize-args?)
-     :validator (or validator schema/validate)
-     :state-secret (if state-secret
-                     (request-state/secret-bytes state-secret)
-                     (request-state/random-secret))
-     :state-ttl-ms state-ttl-ms
-     :log-level log-level
-     :cache {:ttl-ms (or (:ttl-ms cache) 0) :scope (or (:scope cache) "private")}
+               :listeners (atom {})
+               :validate? (boolean validate?)
+               :keywordize-args? (boolean keywordize-args?)
+               :validator (or validator schema/validate)
+               :state-secret (if state-secret
+                               (request-state/secret-bytes state-secret)
+                               (request-state/random-secret))
+               :state-ttl-ms state-ttl-ms
+               :log-level log-level
+               :cache {:ttl-ms (or (:ttl-ms cache) 0) :scope (or (:scope cache) "private")}
      ;; newest first, as presa.protocol/versions orders them
-     :versions (filterv (set versions) protocol/versions)}]
+               :versions (filterv (set versions) protocol/versions)}]
       (when-let [st (:task-store srv)]
             ;; a task's changes reach the streams listening for it
-            (reset! (:on-change st)
-                    (fn [task]
-                      (doseq [{:keys [task-ids scope send]} (vals @(:listeners srv))
-                              :when (and (contains? task-ids (:id task)) (= scope (:scope task)))]
-                        (try (send "notifications/tasks" (tasks/notification task)) (catch Exception _ nil))))))
+        (reset! (:on-change st)
+                (fn [task]
+                  (doseq [{:keys [task-ids scope send]} (vals @(:listeners srv))
+                          :when (and (contains? task-ids (:id task)) (= scope (:scope task)))]
+                    (try (send "notifications/tasks" (tasks/notification task)) (catch Exception _ nil))))))
       srv)))
-
 
 ;; Dispatch
 
@@ -332,7 +329,6 @@
        {:session session
         :respond (constantly (rpc/error id :invalid-request "Invalid JSON-RPC 2.0 message"))}))))
 
-
 (defn handle
   "Handle one message: [session response], where response is nil when the
   message needs none. See `prepare`."
@@ -341,27 +337,21 @@
    (let [{:keys [session respond]} (prepare srv session message opts)]
      [session (respond)])))
 
-
 ;; Notifications from handlers
 
 (defalias notify! core/notify!)
 (defalias client-request! core/client-request!)
 
-
 (def max-progress-message-bytes
   "The longest progress message, in UTF-8 bytes; a longer update is dropped."
   4096)
-
-
 
 (def max-log-data-bytes
   "The largest log message data, as JSON in UTF-8 bytes; a larger message is
   dropped."
   16384)
 
-
 (defn- utf8-length [^String s] (alength (.getBytes s "UTF-8")))
-
 
 (defn progress!
   "Report progress on the request of context, when the client asked for it
@@ -389,7 +379,6 @@
                   message (assoc "message" message))))
      (boolean ok?))))
 
-
 (defn log!
   "Send the client a log message (notifications/message) from the request of
   context, when the server has :logging and level is at or above the level
@@ -413,12 +402,10 @@
            true)
        false))))
 
-
 ;; Subscriptions
 
 (defn- server-of [srv-or-context]
   (if (contains? srv-or-context :listeners) srv-or-context (:server srv-or-context)))
-
 
 (defn list-changed!
   "Tell clients listening for it that a list changed. kind is \"tools\",
@@ -428,7 +415,6 @@
     (doseq [{:keys [kinds send]} (vals @(:listeners (server-of srv-or-context)))
             :when (contains? kinds kind)]
       (try (send method {}) (catch Exception _)))))
-
 
 (defn resource-updated!
   "Tell clients listening to uri, or to a resource uri is under, that it
@@ -441,7 +427,6 @@
                        (may-read? srv {:auth auth} uri))]
       (try (send "notifications/resources/updated" {"uri" uri}) (catch Exception _)))))
 
-
 (defn close-session!
   "Forget what an initialize-era session listens to, when its connection
   ends. Transports call this."
@@ -449,14 +434,12 @@
   (when-let [id (:session-id session)]
     (swap! (:listeners srv) (fn [m] (into {} (remove (fn [[k _]] (and (vector? k) (= id (first k))))) m)))))
 
-
 (defn end-subscriptions!
   "End every open subscriptions/listen stream with its final result, as on
   shutdown."
   [srv]
   (doseq [{:keys [stop]} (vals @(:listeners srv)) :when stop]
     (deliver stop :ended)))
-
 
 ;; Changing a running server's definitions
 
@@ -468,7 +451,6 @@
     (list-changed! srv kind))
   srv)
 
-
 (defn add-tool!
   "Add tool (a map as `server` takes) to a running server, replacing a tool
   of the same name in place. Clients listening for tool list changes are
@@ -476,12 +458,10 @@
   [srv tool]
   (change! srv "tools" #(put-ordered % :tools :tool-order (:name tool) (tool-def tool))))
 
-
 (defn remove-tool!
   "Remove the tool named name from a running server. Returns srv."
   [srv name]
   (change! srv "tools" #(drop-ordered % :tools :tool-order name)))
-
 
 (defn add-resource!
   "Add a resource to a running server, replacing one with the same URI.
@@ -489,12 +469,10 @@
   [srv resource]
   (change! srv "resources" #(put-ordered % :resources :resource-order (:uri resource) (resource-def resource))))
 
-
 (defn remove-resource!
   "Remove the resource at uri from a running server. Returns srv."
   [srv uri]
   (change! srv "resources" #(drop-ordered % :resources :resource-order uri)))
-
 
 (defn add-resource-template!
   "Add a resource template to a running server, replacing one with the same
@@ -508,13 +486,11 @@
                                  (mapv #(if (= (:uri-template t) (:uri-template %)) t %) ts)
                                  (conj ts t))))))))
 
-
 (defn remove-resource-template!
   "Remove the resource template with uri-template. Returns srv."
   [srv uri-template]
   (change! srv "resources"
            (fn [c] (update c :templates (fn [ts] (filterv #(not= uri-template (:uri-template %)) ts))))))
-
 
 (defn add-prompt!
   "Add a prompt to a running server, replacing one of the same name.
@@ -522,24 +498,20 @@
   [srv prompt]
   (change! srv "prompts" #(put-ordered % :prompts :prompt-order (:name prompt) (prompt-def prompt))))
 
-
 (defn remove-prompt!
   "Remove the prompt named name from a running server. Returns srv."
   [srv name]
   (change! srv "prompts" #(drop-ordered % :prompts :prompt-order name)))
-
 
 (defn tool
   "The current definition of the tool named name, or nil."
   [srv name]
   (get-in (snapshot srv) [:tools name]))
 
-
 (defn resource
   "The current definition of the resource at uri, or nil."
   [srv uri]
   (get-in (snapshot srv) [:resources uri]))
-
 
 (defn prompt
   "The current definition of the prompt named name, or nil."

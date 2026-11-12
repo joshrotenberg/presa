@@ -85,7 +85,6 @@
       (f {:token token :method method :url endpoint})
       {"authorization" (str "Bearer " token)})))
 
-
 ;; A connection: what url's transport shares between requests
 ;;
 ;; :client :uri :endpoint :headers :token-provider :log :on-message :on-close

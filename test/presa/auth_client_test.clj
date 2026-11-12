@@ -124,7 +124,7 @@
                                        (HttpResponse$BodyHandlers/discarding)))
               authorizer (oauth/loopback-authorizer browser {:timeout-ms 5000})
               c (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs) :authorizer authorizer
-                                                                                       :client-id "pre" :client-secret "s"})}))]
+                                                                                      :client-id "pre" :client-secret "s"})}))]
           (try
             (is (= "pre" (client/text (client/call-tool c "whoami"))))
             (finally (client/close c) ((:stop! authorizer))))))
@@ -137,7 +137,7 @@
           rs (protected-server (:issuer as) kp)]
       (try
         (let [e (try (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs)
-                                                                                            :authorizer (oauth/redirect-reader)})}))
+                                                                                           :authorizer (oauth/redirect-reader)})}))
                      (catch Exception e e))]
           (is (= -32000 (:code (ex-data e))) (str mode))
           (is (not-any? #{[:post "/token"]} @(:seen as)) (str mode ": no token request")))
@@ -150,7 +150,7 @@
           rs (protected-server (:issuer as) kp)]
       (try
         (let [e (try (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs)
-                                                                                            :authorizer (oauth/redirect-reader)})}))
+                                                                                           :authorizer (oauth/redirect-reader)})}))
                      (catch Exception e e))]
           (is (= -32000 (:code (ex-data e))))
           (is (some #{[:get "/authorize"]} @(:seen as)) "the authorization request was made")
@@ -162,7 +162,7 @@
           rs (protected-server (:issuer as) kp)]
       (try
         (let [e (try (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs)
-                                                                                            :authorizer (oauth/redirect-reader)})}))
+                                                                                           :authorizer (oauth/redirect-reader)})}))
                      (catch Exception e e))]
           (is (= -32000 (:code (ex-data e))))
           (is (not-any? #{[:get "/authorize"] [:post "/token"]} @(:seen as))
@@ -174,7 +174,7 @@
         as (auth-server kp nil {})
         rs (protected-server (:issuer as) kp)
         c (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs) :grant :client-credentials
-                                                                                 :client-id "svc" :client-secret "s"})}))]
+                                                                                :client-id "svc" :client-secret "s"})}))]
     (try
       (is (= "svc" (client/text (client/call-tool c "whoami"))))
       (is (not-any? #{[:get "/authorize"]} @(:seen as)))
@@ -209,7 +209,7 @@
         as (auth-server kp nil {:expires-in 1})
         rs (protected-server (:issuer as) kp)
         c (client/connect (http/url (:url rs) {:token-provider (oauth/provider {:resource (:url rs)
-                                                                                 :authorizer (oauth/redirect-reader)})}))]
+                                                                                :authorizer (oauth/redirect-reader)})}))]
     (try
       (is (= "dcr-client" (client/text (client/call-tool c "whoami"))))
       (is (= "dcr-client" (client/text (client/call-tool c "whoami"))) "an expired token is refreshed")

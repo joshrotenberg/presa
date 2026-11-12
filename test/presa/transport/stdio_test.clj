@@ -27,8 +27,8 @@
   (let [srv (server/server {:name "t" :version "1" :versions protocol/versions
                             :tools [{:name "echo" :handler (fn [{:strs [text]} _] text)}]})
         {:keys [responses]} (run srv [(line (rpc/request 0 "initialize" {"protocolVersion" "2025-06-18"
-                                                                          "capabilities" {}
-                                                                          "clientInfo" {"name" "c" "version" "0"}}))
+                                                                         "capabilities" {}
+                                                                         "clientInfo" {"name" "c" "version" "0"}}))
                                       (line (rpc/notification "notifications/initialized"))
                                       (line (rpc/request 1 "tools/list" {"_meta" {"progressToken" 0}}))
                                       (line (rpc/request 2 "tools/call" {"name" "echo" "arguments" {"text" "hi"}}))])

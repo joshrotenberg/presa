@@ -119,6 +119,6 @@
        (contains? (tasks-of f) (symbol task))
        [(part/proxy [bb "--config" (str f) task]
                     (assoc (select-keys opts [:timeout-ms :probe-timeout-ms])
-                           :dir (str (.getParentFile f))))]
+                      :dir (str (.getParentFile f))))]
        :else
        [(task-tools (assoc (select-keys opts [:bb :timeout-ms :max-chars]) :bb-edn (str f)))]))))

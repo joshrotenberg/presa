@@ -218,7 +218,7 @@
                                                                 {"name" "greet"
                                                                  "inputResponses" {"user_name" {"action" "accept" "content" {"name" "A"}}}
                                                                  "requestState" (get r1 "requestState")}
-                                                                all-caps)))) ]
+                                                                all-caps))))]
       (is (= "input_required" (get r1 "resultType")))
       ;; wait until the clock is past the expiry, polling rather than sleeping a fixed time
       (loop [n 0] (when (and (<= (System/currentTimeMillis) (+ started ttl 5)) (< n 1000)) (Thread/sleep 5) (recur (inc n))))

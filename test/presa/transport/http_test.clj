@@ -331,7 +331,7 @@
   ;; A cancelled request closes its connection, which the server sees.
   (doseq [[label stall] [["no response" (fn [_])]
                          ["a stalled JSON body" (fn [ch] (hk/send! ch {:status 200 :headers {"content-type" "application/json"}
-                                                                        :body "{\"jsonrpc\":"} false))]]]
+                                                                       :body "{\"jsonrpc\":"} false))]]]
     (testing label
       (let [inner (http/handler srv)
             closes (atom 0)

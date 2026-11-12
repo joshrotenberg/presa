@@ -74,34 +74,34 @@
         receive! (fn [message]
                    (if (answer message)
                      nil
-                   (let [{:keys [respond request-id cancel! cancel method]} (settle message)]
-                     (when-let [{:keys [cancel! work]} (and (some? cancel) (get @running cancel))]
-                       (cancel!)
-                       (when work (future-cancel work)))
-                     (if (nil? request-id)
+                     (let [{:keys [respond request-id cancel! cancel method]} (settle message)]
+                       (when-let [{:keys [cancel! work]} (and (some? cancel) (get @running cancel))]
+                         (cancel!)
+                         (when work (future-cancel work)))
+                       (if (nil? request-id)
                        ;; notifications and invalid messages: nothing to run
-                       (when-let [response (respond)] (send response))
-                       (let [token (Object.)
-                             mine? (fn [m] (= token (get-in m [request-id :token])))
-                             _ (swap! running assoc request-id {:cancel! cancel! :token token :method method})
-                             work (future
-                                    (binding [*out* *err*]
-                                      (try
-                                        (when-let [response (respond)]
-                                          (try (send response)
-                                               (catch Throwable e
-                                                 (log "failed to send a response: " (ex-message e))
+                         (when-let [response (respond)] (send response))
+                         (let [token (Object.)
+                               mine? (fn [m] (= token (get-in m [request-id :token])))
+                               _ (swap! running assoc request-id {:cancel! cancel! :token token :method method})
+                               work (future
+                                      (binding [*out* *err*]
+                                        (try
+                                          (when-let [response (respond)]
+                                            (try (send response)
+                                                 (catch Throwable e
+                                                   (log "failed to send a response: " (ex-message e))
                                                  ;; the writer fails before writing anything,
                                                  ;; so the request can still be answered
-                                                 (send (rpc/error request-id :internal-error
-                                                                  (str "Internal error: the response could not be written: "
-                                                                       (ex-message e)))))))
-                                        (catch Throwable e
-                                          (log "failed to send a response: " (ex-message e)))
-                                        (finally
-                                          (swap! running #(if (mine? %) (dissoc % request-id) %))))))]
-                         (swap! running #(if (mine? %) (assoc-in % [request-id :work] work) %))))
-                     nil)))]
+                                                   (send (rpc/error request-id :internal-error
+                                                                    (str "Internal error: the response could not be written: "
+                                                                         (ex-message e)))))))
+                                          (catch Throwable e
+                                            (log "failed to send a response: " (ex-message e)))
+                                          (finally
+                                            (swap! running #(if (mine? %) (dissoc % request-id) %))))))]
+                           (swap! running #(if (mine? %) (assoc-in % [request-id :work] work) %))))
+                       nil)))]
     {:receive! receive!
      :close! (fn []
                (server/close-session! srv @session)

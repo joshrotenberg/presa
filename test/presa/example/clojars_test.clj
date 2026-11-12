@@ -32,8 +32,8 @@
       (cond
         (str/includes? url "q=bad") {:status 400 :body (json/write-str {"error" "Invalid search syntax"})}
         (str/includes? url "/search?") (ok {"total-hits" 1 "results-per-page" 24
-                                           "results" [{"group_name" "ring" "jar_name" "ring-core" "version" "1.15.6"
-                                                       "description" "Ring core libraries."}]})
+                                            "results" [{"group_name" "ring" "jar_name" "ring-core" "version" "1.15.6"
+                                                        "description" "Ring core libraries."}]})
         (str/ends-with? url "/api/artifacts/ring/ring-core") (ok ring-core)
         (str/ends-with? url "/api/artifacts/leiningen/leiningen")
         (ok {"group_name" "leiningen" "jar_name" "leiningen" "latest_release" "2.13.0" "recent_versions" []})
@@ -78,7 +78,7 @@
                  (get (sc c "artifact" {"name" "leiningen"}) "usage")))))
       (testing "versions"
         (is (= ["1.15.6" "1.14.2"] (map #(get % "version") (get (sc c "versions" {"name" "ring/ring-core" "releases_only" true})
-                                                                 "versions"))))
+                                                                "versions"))))
         (is (= 1 (count (get (sc c "versions" {"name" "ring/ring-core" "limit" 1}) "versions")))))
       (testing "dependencies of a version, from its POM"
         (is (= [{"name" "org.clojure/clojure" "scope" "compile" "version" "1.9.0"}

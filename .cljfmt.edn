@@ -1,0 +1,3 @@
+;; cljfmt configuration. bb lint checks formatting and bb fmt fixes it
+;; (dev/fmt.clj); the macros here match .clj-kondo/config.edn's :lint-as.
+{:extra-indents {with-server [[:block 1]]}}

@@ -65,26 +65,26 @@
   ttl-ms."
   ([secret method params data ttl-ms now-ms] (sign secret method params data ttl-ms now-ms nil))
   ([secret method params data ttl-ms now-ms principal]
-  (let [payload (b64 (.getBytes (json/write-str [1 now-ms (+ now-ms ttl-ms) (scope secret method params principal) data]
-                                                :escape-slash false)
-                                "UTF-8"))]
-    (str "presa1." payload "." (b64 (hmac secret (str "presa-token-v1:" payload)))))))
+   (let [payload (b64 (.getBytes (json/write-str [1 now-ms (+ now-ms ttl-ms) (scope secret method params principal) data]
+                                                 :escape-slash false)
+                                 "UTF-8"))]
+     (str "presa1." payload "." (b64 (hmac secret (str "presa-token-v1:" payload)))))))
 
 (defn verify
   "The data in token when it is a valid, unexpired token for method, params
   and principal; else throws ex-info with :kind :invalid-state."
   ([secret method params token now-ms] (verify secret method params token now-ms nil))
   ([secret method params token now-ms principal]
-  (let [invalid #(throw (ex-info "Invalid or expired request state" {:kind :invalid-state}))]
-    (when-not (and (string? token) (<= (count token) max-token-length)) (invalid))
-    (let [[prefix payload signature :as parts] (str/split token #"\." -1)]
-      (when-not (and (= 3 (count parts)) (= "presa1" prefix)) (invalid))
-      (let [expected (hmac secret (str "presa-token-v1:" payload))
-            given (try (unb64 signature) (catch Exception _ (invalid)))]
-        (when-not (MessageDigest/isEqual expected given) (invalid))
-        (let [[version issued expires token-scope data :as decoded]
-              (try (json/read-str (String. (unb64 payload) "UTF-8")) (catch Exception _ (invalid)))]
-          (when-not (and (sequential? decoded) (= 1 version) (number? issued) (number? expires)) (invalid))
-          (when (> now-ms expires) (invalid))
-          (when-not (= token-scope (scope secret method params principal)) (invalid))
-          data))))))
+   (let [invalid #(throw (ex-info "Invalid or expired request state" {:kind :invalid-state}))]
+     (when-not (and (string? token) (<= (count token) max-token-length)) (invalid))
+     (let [[prefix payload signature :as parts] (str/split token #"\." -1)]
+       (when-not (and (= 3 (count parts)) (= "presa1" prefix)) (invalid))
+       (let [expected (hmac secret (str "presa-token-v1:" payload))
+             given (try (unb64 signature) (catch Exception _ (invalid)))]
+         (when-not (MessageDigest/isEqual expected given) (invalid))
+         (let [[version issued expires token-scope data :as decoded]
+               (try (json/read-str (String. (unb64 payload) "UTF-8")) (catch Exception _ (invalid)))]
+           (when-not (and (sequential? decoded) (= 1 version) (number? issued) (number? expires)) (invalid))
+           (when (> now-ms expires) (invalid))
+           (when-not (= token-scope (scope secret method params principal)) (invalid))
+           data))))))

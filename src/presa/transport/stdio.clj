@@ -82,13 +82,13 @@
                    (write! (rpc/error nil :invalid-request
                                       (str "Message exceeds the " max-line-bytes "-byte line limit"))))
                (when-not (str/blank? line)
-               (let [message (try (rpc/parse-line line)
-                                  (catch Exception e
-                                    (log "parse error: " (ex-message e))
-                                    ::unparsed))]
-                 (if (= ::unparsed message)
-                   (write! (rpc/error nil :parse-error "Parse error"))
-                   (receive! message)))))
+                 (let [message (try (rpc/parse-line line)
+                                    (catch Exception e
+                                      (log "parse error: " (ex-message e))
+                                      ::unparsed))]
+                   (if (= ::unparsed message)
+                     (write! (rpc/error nil :parse-error "Parse error"))
+                     (receive! message)))))
              (recur))
          (close!))))))
 

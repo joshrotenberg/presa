@@ -103,23 +103,23 @@
   (if (= "tasks/update" method)
     ;; its inputResponses answer a task, not a retry
     {:input-responses {} :state nil}
-  (let [responses (get params "inputResponses")
-        token (get params "requestState")]
-    (when (contains? params "inputResponses")
-      (when-not (map? responses)
-        (throw (error :invalid-params "inputResponses must be an object")))
-      (when-not (and (every? string? (keys responses)) (every? map? (vals responses)))
-        (throw (error :invalid-params "inputResponses must map string IDs to bare result objects"))))
-    (when (and (contains? params "requestState") (not (string? token)))
-      (throw (error :invalid-params "requestState must be a string")))
-    (when (and (or (contains? params "inputResponses") (contains? params "requestState"))
-               (not (input-methods method)))
-      (throw (error :invalid-params (str method " does not take inputResponses or requestState"))))
-    {:input-responses (or responses {})
-     :state (when (string? token)
-              (try (request-state/verify (:state-secret srv) method params token (now-ms) principal)
-                   (catch clojure.lang.ExceptionInfo _
-                     (throw (error :invalid-params "Invalid or expired request state")))))})))
+    (let [responses (get params "inputResponses")
+          token (get params "requestState")]
+      (when (contains? params "inputResponses")
+        (when-not (map? responses)
+          (throw (error :invalid-params "inputResponses must be an object")))
+        (when-not (and (every? string? (keys responses)) (every? map? (vals responses)))
+          (throw (error :invalid-params "inputResponses must map string IDs to bare result objects"))))
+      (when (and (contains? params "requestState") (not (string? token)))
+        (throw (error :invalid-params "requestState must be a string")))
+      (when (and (or (contains? params "inputResponses") (contains? params "requestState"))
+                 (not (input-methods method)))
+        (throw (error :invalid-params (str method " does not take inputResponses or requestState"))))
+      {:input-responses (or responses {})
+       :state (when (string? token)
+                (try (request-state/verify (:state-secret srv) method params token (now-ms) principal)
+                     (catch clojure.lang.ExceptionInfo _
+                       (throw (error :invalid-params "Invalid or expired request state")))))})))
 
 (defn negotiate
   "The version to answer initialize with: the one the client asked for when

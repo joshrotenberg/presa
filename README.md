@@ -186,7 +186,8 @@ bb test                          # tests under Babashka
 bb jvm-test                      # the same tests on the JVM, plus the JVM-only schema tests (clojure -M:test)
 bb conformance 2026-07-28        # the conformance runner's server leg against the fixture, at a revision
 bb conformance client 2026-07-28 # its client leg against the client harness
-bb lint                          # no em dashes, conventional commits since origin/main
+bb lint                          # clj-kondo, cljfmt, no em dashes, conventional commits since origin/main
+bb fmt                           # format the sources as bb lint checks them (cljfmt)
 clojure -T:build jar             # the jar a release deploys to Clojars
 ```
 
