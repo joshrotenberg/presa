@@ -168,6 +168,16 @@
        (str o "/.well-known/openid-configuration" path)
        (str o path "/.well-known/openid-configuration")])))
 
+(defn- secure-url?
+  "Whether url is https, or http on a loopback host (local development, tests
+  and the conformance runner)."
+  [url]
+  (let [u (try (URI. (str url)) (catch Exception _ nil))
+        scheme (some-> u .getScheme str/lower-case)
+        host (some-> u .getHost str/lower-case)]
+    (or (= "https" scheme)
+        (and (= "http" scheme) (contains? #{"127.0.0.1" "localhost" "[::1]" "::1"} host)))))
+
 (defn- discover-as [issuer]
   (let [doc (or (some get-json (as-metadata-urls issuer))
                 (fail :authorization-server-metadata (str "No authorization server metadata for " issuer)))]
@@ -177,6 +187,11 @@
             {:expected issuer :found (get doc "issuer")}))
     (when-not (string? (get doc "token_endpoint"))
       (fail :authorization-server-metadata "The authorization server metadata has no token_endpoint"))
+    ;; credentials and codes go to these: HTTPS, as the spec requires
+    (doseq [k ["issuer" "token_endpoint" "authorization_endpoint" "registration_endpoint"]
+            :let [v (get doc k)]
+            :when (and (some? v) (not (secure-url? v)))]
+      (fail :authorization-server-metadata (str "The authorization server's " k " is not HTTPS") {:url v}))
     doc))
 
 ;; Client identity and authentication
@@ -337,8 +352,14 @@
         _ (when-not (and redirect-uri authorize)
             (fail :authorizer "The code flow needs an :authorizer with :redirect-uri and :authorize"))
         methods (get as "code_challenge_methods_supported")
-        _ (when (and methods (not (some #{"S256"} methods)))
-            (fail :authorization-server-metadata "The authorization server does not support PKCE S256"))
+        ;; the spec: refuse when the metadata does not list S256
+        _ (when-not (if (nil? methods)
+                      (:allow-unadvertised-pkce? opts)
+                      (some #{"S256"} methods))
+            (fail :authorization-server-metadata
+                  (if (nil? methods)
+                    "The authorization server metadata does not list code_challenge_methods_supported"
+                    "The authorization server does not support PKCE S256")))
         identity (client-identity state opts as issuer redirect-uri)
         verifier (random-b64 32)
         state-value (random-b64 32)
@@ -455,6 +476,12 @@
                    later one, with no retry and no other grant (make a new
                    provider to try again)
   - :auth-method   force a token endpoint auth method
+  - :allow-unadvertised-pkce?  run the code flow (still with PKCE S256)
+                   when the authorization server metadata does not list
+                   code_challenge_methods_supported; refused by default, as
+                   the spec requires
+
+  Authorization server endpoints must be https, except on loopback hosts.
   - :dpop          false to never use DPoP (RFC 9449). Otherwise the provider
                    sends DPoP proofs (ES256, a key per provider) when the
                    authorization server lists ES256 in

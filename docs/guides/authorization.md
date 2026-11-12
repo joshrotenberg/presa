@@ -130,6 +130,11 @@ the request is sent again with the token. A later 403 that asks for more
 scope runs it again for the union of scopes; a token from another
 authorization server is never reused.
 
+The client refuses an authorization server whose metadata does not list
+`S256` in `code_challenge_methods_supported` (`:allow-unadvertised-pkce?
+true` accepts metadata that leaves the field out), and one whose issuer or
+endpoints are not `https`, loopback hosts aside.
+
 The browser step is yours: an authorizer gets the authorization URL and
 returns the URL the authorization server redirected to.
 `loopback-authorizer` listens on 127.0.0.1 and calls your function to open
