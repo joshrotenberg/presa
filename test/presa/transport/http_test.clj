@@ -310,6 +310,21 @@
         (client/close c)
         (some-> @s2 :stop! (apply []))))))
 
+(deftest every-request-is-answered
+  (let [s (http/serve! (server/server {:name "t" :version "1"
+                                       :tools [{:name "asserts" :handler (fn [_ _] (assert false "nope"))}
+                                               {:name "unwritable" :handler (fn [_ _] {"content" [] "structuredContent" {"at" (Object.)}})}]})
+                       {})]
+    (try
+      (let [r (post (:url s) (request 1 "tools/call" {"name" "asserts"}))]
+        (is (= 200 (:status r)))
+        (is (true? (get-in (json-body r) ["result" "isError"]))))
+      (let [r (post (:url s) (request 2 "tools/call" {"name" "unwritable"}))]
+        (is (= 500 (:status r)))
+        (is (= 2 (get (json-body r) "id")))
+        (is (= -32603 (get-in (json-body r) ["error" "code"]))))
+      (finally ((:stop! s))))))
+
 (deftest header-values
   (is (= "plain value" (http/encode-header-value "plain value")))
   (is (= "true" (http/encode-header-value true)))

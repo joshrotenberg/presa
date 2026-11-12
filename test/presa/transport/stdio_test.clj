@@ -47,6 +47,29 @@
         (is (= ["2026-07-28"] (get-in discovered ["result" "supportedVersions"]))))
       (is (= 1 (count log))))))
 
+(def failing-srv
+  (server/server
+   {:name "t" :version "1"
+    :tools [{:name "asserts" :handler (fn [_ _] (assert false "nope"))}
+            {:name "unwritable" :handler (fn [_ _] {"content" [] "structuredContent" {"at" (Object.)}})}]
+    :resources [{:uri "x:/error" :name "error" :handler (fn [_] (assert false "deep"))}]}))
+
+(deftest every-request-is-answered
+  (let [{:keys [responses log]} (run failing-srv
+                                     [(line (rpc/request 1 "tools/call" {"name" "asserts" "_meta" meta-2026}))
+                                      (line (rpc/request 2 "tools/call" {"name" "unwritable" "_meta" meta-2026}))
+                                      (line (rpc/request 3 "resources/read" {"uri" "x:/error" "_meta" meta-2026}))])
+        by-id (into {} (map (juxt #(get % "id") identity)) responses)]
+    (testing "a tool handler's Error is an isError result"
+      (is (true? (get-in by-id [1 "result" "isError"])))
+      (is (re-find #"nope" (get-in by-id [1 "result" "content" 0 "text"]))))
+    (testing "a result that cannot be written is an internal error with the request id"
+      (is (= -32603 (get-in by-id [2 "error" "code"])))
+      (is (some #(re-find #"failed to send a response" %) log)))
+    (testing "another handler's Error is an internal error"
+      (is (= -32603 (get-in by-id [3 "error" "code"])))
+      (is (re-find #"deep" (get-in by-id [3 "error" "message"]))))))
+
 (deftest tool-calls-run-concurrently
   (let [released (promise)
         srv (server/server {:name "t" :version "1"

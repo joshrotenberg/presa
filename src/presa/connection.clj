@@ -83,7 +83,14 @@
                                     (binding [*out* *err*]
                                       (try
                                         (when-let [response (respond)]
-                                          (send response))
+                                          (try (send response)
+                                               (catch Throwable e
+                                                 (log "failed to send a response: " (ex-message e))
+                                                 ;; the writer fails before writing anything,
+                                                 ;; so the request can still be answered
+                                                 (send (rpc/error request-id :internal-error
+                                                                  (str "Internal error: the response could not be written: "
+                                                                       (ex-message e)))))))
                                         (catch Throwable e
                                           (log "failed to send a response: " (ex-message e)))
                                         (finally

@@ -281,7 +281,7 @@
                                           _ (emit! srv {:event :request/start :method method :request-id id
                                                         :version (or (:version session') (get-in message ["params" "_meta" (:protocol-version protocol/meta-keys)]))})
                                           response (try (rpc/result id (respond))
-                                                        (catch Exception e (fail e)))]
+                                                        (catch Throwable e (fail e)))]
                                       (emit! srv (cond-> {:event :request/stop :method method :request-id id
                                                           :duration-ms (/ (- (System/nanoTime) t0) 1e6)
                                                           :outcome (cond @cancelled :cancelled
@@ -290,7 +290,7 @@
                                                    (contains? response "error")
                                                    (assoc :error-code (get-in response ["error" "code"]))))
                                       (when-not @cancelled response)))})
-                      (catch Exception e
+                      (catch Throwable e
                         (let [response (fail e)]
                           (emit! srv {:event :request/rejected :method (get message "method") :request-id id
                                       :error-code (get-in response ["error" "code"])})
