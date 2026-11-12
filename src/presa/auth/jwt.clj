@@ -184,7 +184,8 @@
                            (swap! cache assoc
                                   :fetched (System/currentTimeMillis)
                                   :keys (into {} (keep (fn [jwk]
-                                                         (when-let [k (try (jwk->public-key jwk) (catch Exception _ nil))]
+                                                         (when-let [k (and (not= "enc" (get jwk "use"))
+                                                                           (try (jwk->public-key jwk) (catch Exception _ nil)))]
                                                            [(get jwk "kid") {:key k :alg (get jwk "alg")}])))
                                               ks)))))))]
     (fn [kid]
@@ -199,6 +200,8 @@
 (defn- scopes [{:strs [scope scp]}]
   (cond (string? scope) (vec (remove str/blank? (str/split scope #"\s+")))
         (sequential? scp) (vec scp)
+        ;; Azure AD sends scp as a space-delimited string
+        (string? scp) (vec (remove str/blank? (str/split scp #"\s+")))
         :else []))
 
 (defn verifier
@@ -230,8 +233,10 @@
   (when-not audience
     (throw (ex-info "A JWT verifier needs :audience" {:kind :invalid-input})))
   (let [accepted (audiences (if (string? audience) [audience] (vec audience)))
-        static (into {} (map (fn [[kid k]] [kid {:key (if (map? k) (jwk->public-key k) k)
-                                                 :alg (when (map? k) (get k "alg"))}]))
+        static (into {} (keep (fn [[kid k]]
+                                (when-not (and (map? k) (= "enc" (get k "use")))
+                                  [kid {:key (if (map? k) (jwk->public-key k) k)
+                                        :alg (when (map? k) (get k "alg"))}])))
                      keys)
         from-jwks (when jwks-url (jwks-source jwks-url refresh-ms max-age-ms))
         secret (when secret (if (bytes? secret) secret (.getBytes (str secret) "UTF-8")))
@@ -248,7 +253,10 @@
                 kid (get header "kid")
                 key (case alg
                       "HS256" secret
-                      ("RS256" "ES256") (:key (or (get static kid) (when from-jwks (from-jwks kid))))
+                      ("RS256" "ES256") (let [entry (or (get static kid) (when from-jwks (from-jwks kid)))]
+                                          ;; a key that names its alg verifies only that alg
+                                          (when (or (nil? (:alg entry)) (= alg (:alg entry)))
+                                            (:key entry)))
                       nil)
                 now (quot (System/currentTimeMillis) 1000)]
             (cond
@@ -256,10 +264,15 @@
               (and require-typ? (not (#{"at+jwt" "application/at+jwt"} (some-> (get header "typ") str str/lower-case))))
               (refuse :invalid-token "The token is not a JWT access token (typ at+jwt)")
               (nil? key) (refuse :invalid-token "No key verifies this token")
+              ;; a DPoP-bound token (RFC 9449): this resource server cannot check
+              ;; the binding, so it does not take the token as a bearer token
+              (and (map? claims) (some? (get-in claims ["cnf" "jkt"])))
+              (refuse :invalid-token "The token is bound to a DPoP key, which this server does not check")
               (not (verify-signature alg key (.getBytes (str h "." p) "UTF-8") signature))
               (refuse :invalid-token "The token signature is invalid")
               (and require-exp? (not (number? (get claims "exp")))) (refuse :invalid-token "The token has no exp")
-              (and (number? (get claims "exp")) (> now (+ (get claims "exp") leeway-s))) (refuse :expired "The token has expired")
+              ;; RFC 7519: not on or after exp
+              (and (number? (get claims "exp")) (>= now (+ (get claims "exp") leeway-s))) (refuse :expired "The token has expired")
               (and (number? (get claims "nbf")) (< (+ now leeway-s) (get claims "nbf"))) (refuse :invalid-token "The token is not yet valid")
               (and issuer (not= issuer (get claims "iss"))) (refuse :wrong-issuer "The token is from another issuer")
               (empty? (set/intersection accepted (audiences (get claims "aud"))))

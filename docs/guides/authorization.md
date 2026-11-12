@@ -90,7 +90,12 @@ cannot resume another's, and an initialize-era HTTP session belongs to the
 subject that opened it.
 
 `presa.auth.jwt/verifier` requires `exp` in the tokens it accepts, as RFC
-9068 does for access tokens; `:require-exp? false` drops that.
+9068 does for access tokens, and refuses a token from its `exp` second on;
+`:require-exp? false` drops the requirement. It refuses a DPoP-bound token
+(one with `cnf.jkt`), since this resource server takes only Bearer and
+cannot check the binding. A key that names its `alg` verifies only that
+alg, and `use: "enc"` keys are skipped. Scopes come from `scope`, or from
+`scp` as an array or a space-delimited string.
 `:require-typ? true` also refuses a token whose header `typ` is not
 `at+jwt`, as RFC 9068 asks; it is off by default because some issuers put
 `typ: JWT` on their access tokens.
@@ -139,7 +144,10 @@ true` accepts metadata that leaves the field out), and one whose issuer or
 endpoints are not `https`, loopback hosts aside. `:allow-http? true` accepts
 plain http on any host, for a development authorization server in a
 container network such as `http://keycloak:8080`; credentials and codes
-then travel unencrypted.
+then travel unencrypted. With pre-registered credentials, set `:issuer`:
+the protected resource metadata must list that authorization server, and
+the credentials go only to it, so an MCP server cannot steer them
+elsewhere.
 
 The browser step is yours: an authorizer gets the authorization URL and
 returns the URL the authorization server redirected to.

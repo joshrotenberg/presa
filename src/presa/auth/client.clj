@@ -448,8 +448,15 @@
         _ (when-not (and (string? resource) (same-resource? resource server-url))
             (fail :resource-metadata "The protected resource metadata names another resource"
                   {:resource resource :server server-url}))
-        issuer (or (first (get prm "authorization_servers"))
-                   (fail :resource-metadata "The protected resource metadata names no authorization server"))
+        listed (get prm "authorization_servers")
+        issuer (if-let [pinned (:issuer opts)]
+                 ;; credentials go only to the authorization server the caller named
+                 (if (some #{pinned} listed)
+                   pinned
+                   (fail :resource-metadata "The protected resource metadata does not list the pinned :issuer"
+                         {:issuer pinned :listed (vec listed)}))
+                 (or (first listed)
+                     (fail :resource-metadata "The protected resource metadata names no authorization server")))
         as (discover-as issuer opts)
         current (:token @state)
         ;; a token from another authorization server is not reused
@@ -515,6 +522,11 @@
                    code_challenge_methods_supported; refused by default, as
                    the spec requires
 
+  - :issuer        pin the authorization server: the protected resource
+                   metadata must list it, and credentials go only to it
+                   (default: the first one listed). Set it with
+                   pre-registered credentials, so an MCP server cannot steer
+                   them elsewhere
   - :allow-http?    accept authorization server endpoints over plain http on
                    any host, such as a development server in a container
                    network (http://keycloak:8080); credentials and codes then

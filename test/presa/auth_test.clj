@@ -357,3 +357,24 @@
       (is (= [200 200 503] [(init "ada") (init "ada") (init "ada")]) "a third session for ada is refused")
       (is (= 200 (init "bob")) "another subject is not affected")
       (finally (stop!)))))
+
+(deftest verifier-edges
+  (let [rsa (rsa-pair)
+        ec (ec-pair)
+        jwk (fn [pair & kvs] (apply assoc (jwt/public-key->jwk (.getPublic pair)) kvs))
+        v (jwt/verifier {:audience "x" :keys {"r" (jwk rsa "alg" "RS256")
+                                              "r384" (jwk rsa "alg" "RS384")
+                                              "e" (jwk ec "use" "enc")}})
+        claims {"sub" "s" "aud" "x" "exp" (+ (quot (System/currentTimeMillis) 1000) 600)}
+        rs (fn [c & [kid]] (jwt/sign c {:alg "RS256" :kid (or kid "r") :key (.getPrivate rsa)}))]
+    (testing "a DPoP-bound token is refused, since the binding cannot be checked"
+      (is (= :invalid-token (:error (v (rs (assoc claims "cnf" {"jkt" "abc"})))))))
+    (testing "scp as a space-delimited string"
+      (is (= ["a" "b"] (:scopes (v (rs (assoc claims "scp" "a b")))))))
+    (testing "a token is expired at its exp second"
+      (is (= :expired (:error (v (rs (assoc claims "exp" (quot (System/currentTimeMillis) 1000))))))))
+    (testing "a key's alg must match the token's"
+      (is (= "s" (:subject (v (rs claims "r")))))
+      (is (= :invalid-token (:error (v (rs claims "r384")))) "an RS256 token against a key for RS384"))
+    (testing "an encryption key does not verify signatures"
+      (is (= :invalid-token (:error (v (jwt/sign claims {:alg "ES256" :kid "e" :key (.getPrivate ec)}))))))))
