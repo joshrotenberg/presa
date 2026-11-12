@@ -210,6 +210,8 @@
                                    (let [r (deref p timeout-ms :presa.transport.http/timeout)]
                                      (when (= :presa.transport.http/timeout r)
                                        (throw (ex-info (str method " timed out") {:kind :timeout :method method})))
+                                     (when (= :presa.transport.http/closed r)
+                                       (throw (ex-info "The session ended" {:kind :closed :method method})))
                                      r)
                                    (finally (swap! outgoing dissoc id))))))
             opts {:notify emit!
@@ -314,9 +316,11 @@
        (>= (- now @(:last-seen entry)) idle-ms)))
 
 (defn- close-entry!
-  "Close a session entry: end its server session and its GET stream."
+  "Close a session entry: end its server session and its GET stream, and
+  fail the requests to the client still waiting on it."
   [srv entry]
   (server/close-session! srv @(:session entry))
+  (doseq [[_ p] @(:outgoing entry)] (deliver p :presa.transport.http/closed))
   (when-let [ch @(:stream entry)] (try (hk/close ch) (catch Throwable _))))
 
 (defn- sweep!

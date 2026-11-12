@@ -469,3 +469,34 @@
     (is (= 200 (raw-status (:url s) (str "127.0.0.1:" (:port s))))))
   (with-server [s {:allowed-hosts #{"evil.example.com"}}]
     (is (= 200 (raw-status (:url s) "evil.example.com")) ":allowed-hosts replaces the default")))
+
+(deftest a-deleted-session-fails-requests-waiting-on-the-client
+  (let [asked (promise)
+        failed (promise)
+        s (http/serve! (server/server {:name "t" :version "1" :versions protocol/versions
+                                       :tools [{:name "ask"
+                                                :handler (fn [_ ctx]
+                                                           (deliver asked true)
+                                                           (try (server/client-request! ctx "elicitation/create"
+                                                                                        {"mode" "form" "message" "who?"
+                                                                                         "requestedSchema" {"type" "object"}})
+                                                                (catch Exception e (deliver failed (:kind (ex-data e)))))
+                                                           "done")}]})
+                       {})]
+    (try
+      (let [init (post (:url s) {"jsonrpc" "2.0" "id" 0 "method" "initialize"
+                                 "params" {"protocolVersion" "2025-06-18" "capabilities" {"elicitation" {}}
+                                           "clientInfo" {"name" "c" "version" "0"}}})
+            sid (:session-id init)
+            headers {"mcp-session-id" sid "mcp-protocol-version" "2025-06-18"}]
+        (post (:url s) {"jsonrpc" "2.0" "method" "notifications/initialized"} headers)
+        ;; the call waits on the client's answer, which never comes
+        (future (post (:url s) {"jsonrpc" "2.0" "id" 1 "method" "tools/call" "params" {"name" "ask"}}
+                      (assoc headers "mcp-name" "ask")))
+        (is (true? (deref asked 5000 false)))
+        (Thread/sleep 200)
+        (.send (HttpClient/newHttpClient)
+               (.build (doto (HttpRequest/newBuilder (URI. (:url s))) (.header "mcp-session-id" sid) (.DELETE)))
+               (HttpResponse$BodyHandlers/discarding))
+        (is (= :closed (deref failed 2000 nil)) "the waiting request fails at once"))
+      (finally ((:stop! s))))))

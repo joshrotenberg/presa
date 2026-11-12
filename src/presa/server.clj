@@ -42,6 +42,20 @@
 
 ;; Definitions
 
+(defn- enqueue!
+  "Run f for the listener at key k of srv on that listener's own queue (an
+  agent): a slow listener holds up neither the caller nor the others, and
+  its notifications keep their order. Queues of listeners that are gone are
+  dropped."
+  [srv k f]
+  (let [queues (:queues srv)
+        a (or (get @queues k)
+              (get (swap! queues (fn [m] (if (contains? m k) m (assoc m k (agent nil))))) k))]
+    (send-off a (fn [_] (try (f) (catch Throwable _)) nil))
+    (let [live @(:listeners srv)]
+      (when (some #(not (contains? live %)) (keys @queues))
+        (swap! queues #(select-keys % (keys live)))))))
+
 (def max-progress-updates
   "The most progress notifications one request sends; later ones are dropped,
   unless the server's :max-progress-updates says otherwise."
@@ -223,6 +237,8 @@
                :default-scopes (vec default-scopes)
      ;; open subscriptions/listen streams, by a key of their own
                :listeners (atom {})
+               ;; a notification queue per listener key, see enqueue!
+               :queues (atom {})
                :validate? (boolean validate?)
                :keywordize-args? (boolean keywordize-args?)
                :validator (or validator schema/validate)
@@ -238,9 +254,9 @@
             ;; a task's changes reach the streams listening for it
         (reset! (:on-change st)
                 (fn [task]
-                  (doseq [{:keys [task-ids scope send]} (vals @(:listeners srv))
+                  (doseq [[k {:keys [task-ids scope send]}] @(:listeners srv)
                           :when (and (contains? task-ids (:id task)) (= scope (:scope task)))]
-                    (try (send "notifications/tasks" (tasks/notification task)) (catch Exception _ nil))))))
+                    (enqueue! srv k #(send "notifications/tasks" (tasks/notification task)))))))
       srv)))
 
 ;; Dispatch
@@ -424,10 +440,11 @@
   "Tell clients listening for it that a list changed. kind is \"tools\",
   \"prompts\" or \"resources\". Takes the server, or a handler's context."
   [srv-or-context kind]
-  (let [method (str "notifications/" kind "/list_changed")]
-    (doseq [{:keys [kinds send]} (vals @(:listeners (server-of srv-or-context)))
+  (let [method (str "notifications/" kind "/list_changed")
+        srv (server-of srv-or-context)]
+    (doseq [[k {:keys [kinds send]}] @(:listeners srv)
             :when (contains? kinds kind)]
-      (try (send method {}) (catch Exception _)))))
+      (enqueue! srv k #(send method {})))))
 
 (defn resource-updated!
   "Tell clients listening to uri, or to a resource uri is under, that it
@@ -435,10 +452,10 @@
   caller may not read uri (see :required-scopes) is not told."
   [srv-or-context uri]
   (let [srv (snapshot (server-of srv-or-context))]
-    (doseq [{:keys [uris send auth]} (vals @(:listeners srv))
+    (doseq [[k {:keys [uris send auth]}] @(:listeners srv)
             :when (and (some #(or (= % uri) (str/starts-with? uri (str (str/replace % #"/$" "") "/"))) uris)
                        (may-read? srv {:auth auth} uri))]
-      (try (send "notifications/resources/updated" {"uri" uri}) (catch Exception _)))))
+      (enqueue! srv k #(send "notifications/resources/updated" {"uri" uri})))))
 
 (defn close-session!
   "Forget what an initialize-era session listens to, when its connection

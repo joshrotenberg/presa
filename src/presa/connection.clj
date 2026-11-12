@@ -103,7 +103,6 @@
                        nil)))]
     {:receive! receive!
      :close! (fn []
-               (server/close-session! srv @session)
                (doseq [[_ p] @outgoing] (deliver p ::closed))
                ;; subscription streams never finish on their own
                (doseq [{:keys [method cancel! work]} (vals @running)
@@ -123,5 +122,7 @@
                      (when work (future-cancel work))))
                  (run! (fn [{:keys [work]}] (when work (try @work (catch Exception _))))
                        (vals @running)))
+               ;; after the requests in flight, which may still use the session
+               (server/close-session! srv @session)
                nil)
      :session (fn [] @session)}))
