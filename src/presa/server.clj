@@ -42,6 +42,18 @@
 
 ;; Definitions
 
+(def max-progress-updates
+  "The most progress notifications one request sends; later ones are dropped,
+  unless the server's :max-progress-updates says otherwise."
+  1000)
+
+
+(def max-log-messages
+  "The most log messages one request sends; later ones are dropped,
+  unless the server's :max-log-messages says otherwise."
+  1000)
+
+
 (defn server
   "A server map from options:
 
@@ -113,6 +125,9 @@
       for `resource-updated!` on resources they name
   - :max-subscriptions  the most subscriptions/listen streams open at once
       (default 256); another is refused with -32603, which HTTP sends as 503
+  - :max-progress-updates, :max-log-messages  the most progress
+      notifications and log messages one request sends (default 1000 each);
+      later ones are dropped. nil is no cap
   - :on-event  (fn [event]) for instrumentation: each event is a map with
       :event and its fields:
         :request/start     :method :request-id :version
@@ -153,6 +168,7 @@
            versions page-size cache logging log-level validate? state-secret state-ttl-ms keywordize-args?
            list-changed subscribe max-subscriptions on-event required-scopes default-scopes validator]
     tasks-opts :tasks
+    :as opts
     :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000
          max-subscriptions 256}}]
   (when-not (and (string? name) (string? version))
@@ -191,6 +207,9 @@
      :list-changed (boolean list-changed)
      :subscribe (boolean subscribe)
      :max-subscriptions max-subscriptions
+     ;; per request; nil is no cap
+     :max-progress-updates (get opts :max-progress-updates max-progress-updates)
+     :max-log-messages (get opts :max-log-messages max-log-messages)
      :on-event on-event
      :task-store (when tasks-opts (tasks/store tasks-opts))
      :required-scopes (or required-scopes {})
@@ -328,19 +347,11 @@
 (defalias notify! core/notify!)
 (defalias client-request! core/client-request!)
 
-(def max-progress-updates
-  "The most progress notifications one request sends; later ones are dropped."
-  1000)
-
 
 (def max-progress-message-bytes
   "The longest progress message, in UTF-8 bytes; a longer update is dropped."
   4096)
 
-
-(def max-log-messages
-  "The most log messages one request sends; later ones are dropped."
-  1000)
 
 
 (def max-log-data-bytes
@@ -356,8 +367,8 @@
   "Report progress on the request of context, when the client asked for it
   with a progressToken in _meta. progress is a number that increases with
   each call; total and message are optional. Returns true when the update
-  was sent: an update that does not increase, one past
-  max-progress-updates, or a message longer than
+  was sent: an update that does not increase, one past the server's
+  :max-progress-updates (default max-progress-updates), or a message longer than
   max-progress-message-bytes is dropped."
   ([context progress] (progress! context progress {}))
   ([context progress {:keys [total message]}]
@@ -367,7 +378,8 @@
                   (or (nil? message) (<= (utf8-length (str message)) max-progress-message-bytes))
                   (or (nil? sent)
                       (let [{:keys [last-progress] n :progress} @sent]
-                        (and (< n max-progress-updates)
+                        (and (let [cap (get (:server context) :max-progress-updates max-progress-updates)]
+                               (or (nil? cap) (< n cap)))
                              (or (nil? last-progress) (> progress last-progress))))))]
      (when ok?
        (when sent (swap! sent #(-> % (update :progress inc) (assoc :last-progress progress))))
@@ -390,7 +402,9 @@
                   (throw (ex-info (str "Unknown log level " level) {:kind :invalid-input :level level})))
          wanted (some-> (:log-level context) protocol/log-level-rank)]
      (if (and (::logging context) wanted (>= rank wanted)
-              (or (nil? (::sent context)) (< (:logs @(::sent context)) max-log-messages))
+              (or (nil? (::sent context))
+                  (let [cap (get (:server context) :max-log-messages max-log-messages)]
+                    (or (nil? cap) (< (:logs @(::sent context)) cap))))
               (<= (utf8-length (json-text data)) max-log-data-bytes))
        (do (some-> (::sent context) (swap! update :logs inc))
            (notify! context "notifications/message"
