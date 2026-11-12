@@ -1,5 +1,4 @@
-;; The repository conventions AGENTS.md lists, as cj run check checks them,
-;; for CI and anyone without cj:
+;; The repository conventions AGENTS.md lists:
 ;;
 ;; - clj-kondo (through its Babashka pod, configured in .clj-kondo/config.edn)
 ;;   finds no errors or warnings in the Clojure sources; info findings are
@@ -48,7 +47,7 @@
 (def base (or (first *command-line-args*) "origin/main"))
 (def base? (zero? (:exit (p/shell {:out :string :err :string :continue true} "git" "rev-parse" "--verify" "--quiet" base))))
 
-;; the same rule as clajent.checks/conventional-subject, which cj run check uses
+;; conventional-commit subject prefixes
 (def prefix #"^(?:(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)\s]+\))?!?: \S|Revert \").*")
 (def attribution #"(?im)^\s*(co-authored-by|assisted-by|generated-by):|generated with")
 
