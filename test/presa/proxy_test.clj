@@ -233,6 +233,10 @@
         c (client/connect (client/in-process server))
         eventually (fn [f] (loop [n 0] (cond (f) true (> n 100) false :else (do (Thread/sleep 20) (recur (inc n))))))]
     (try
+      ;; the proxy follows b once its subscription is acknowledged: a change
+      ;; that shows up proves it, so the next one is not missed
+      (server/add-tool! b {:name "z" :handler (fn [_ _] "z")})
+      (is (eventually #(some (fn [t] (= "p_z" (get t "name"))) (client/list-tools c))))
       (testing "a name another backend has is skipped and logged"
         (server/add-tool! b {:name "x" :handler (fn [_ _] "b's x")})
         (is (eventually #(some (fn [l] (clojure.string/includes? l "p_x")) @logs)) (str @logs))
