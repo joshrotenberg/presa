@@ -76,16 +76,18 @@
   its :close!. Other options are presa.server/server's; :name defaults to
   the working directory's name, :version to \"0\", and :versions to every
   revision presa serves (presa.protocol/versions), so initialize-era
-  clients such as Codex connect. Explicit :instructions replace the parts'.
-  :duplicates is combine's option."
+  clients such as Codex connect. :tools, :resources, :resource-templates and
+  :prompts in opts join the parts as one more, last part; explicit
+  :instructions replace the parts'. :duplicates is combine's option."
   [{:keys [parts duplicates] :as opts}]
-  (let [p (combine parts {:duplicates (or duplicates :throw)})]
+  (let [own (select-keys opts [:tools :resources :resource-templates :prompts])
+        p (combine (cond-> (vec parts) (seq own) (conj own)) {:duplicates (or duplicates :throw)})]
     [(server/server (merge {:name (.getName (.getCanonicalFile (io/file ".")))
                             :version "0"
                             :versions protocol/versions}
                            (select-keys p [:tools :resources :resource-templates :prompts])
                            (when (:instructions p) {:instructions (:instructions p)})
-                           (dissoc opts :parts :duplicates)))
+                           (dissoc opts :parts :duplicates :tools :resources :resource-templates :prompts)))
      p]))
 
 (defn serve!

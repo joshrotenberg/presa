@@ -95,14 +95,13 @@
         tool (or (let [t (get-in srv [:tools tool-name])] (when (and t (era-tool? context t)) t))
                  (throw (error :invalid-params (str "Unknown tool: " tool-name))))
         _ (check-permitted! srv context :tool tool-name (str "tool " tool-name))
-        policy (when-not (and (:validate? srv) (:input-schema tool)
-                              ((:validator srv) arguments (:input-schema tool)))
-                 (task-policy srv tool params context))
+        invalid (and (:validate? srv) (:input-schema tool)
+                     ((:validator srv) arguments (:input-schema tool)))
+        policy (when-not invalid (task-policy srv tool params context))
         declared? (tasks/declared? (:client-capabilities context))]
     (when (and (= :required policy) (not declared?))
       (throw (error :missing-client-capability "Missing required client capability" tasks/required-capabilities)))
-    (if-let [invalid (and (:validate? srv) (:input-schema tool)
-                          ((:validator srv) arguments (:input-schema tool)))]
+    (if invalid
       (tool-error (str "Invalid arguments " (schema/describe invalid)))
       ;; validated as sent; the handler (and a task's) sees them converted
       (let [arguments (if (keywordize-args? srv tool) (walk/keywordize-keys arguments) arguments)]

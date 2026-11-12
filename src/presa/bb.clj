@@ -33,9 +33,10 @@
     (try
       (let [proc (.start (doto (ProcessBuilder. ^java.util.List (into [bb "--config" (str config) (str task)] args))
                            (.directory (.getParentFile config))
-                           (.redirectInput (java.lang.ProcessBuilder$Redirect/from (io/file "/dev/null")))
                            (.redirectOutput out-file)
                            (.redirectError err-file)))
+            ;; no stdin: closed at once (portable, unlike /dev/null)
+            _ (.close (.getOutputStream proc))
             ;; descendants first: once bb is gone they are reparented
             kill! (fn []
                     (run! #(.destroy ^java.lang.ProcessHandle %) (iterator-seq (.iterator (.descendants proc))))
@@ -71,11 +72,19 @@
   ([{:keys [bb-edn only bb timeout-ms max-chars]
      :or {bb-edn "bb.edn" bb "bb" timeout-ms 600000 max-chars 100000}}]
    (let [f (.getCanonicalFile (io/file bb-edn))
-         only (some->> only (map str) set)]
+         only (some->> only (map str) set)
+         tasks (for [[task spec] (tasks-of f)
+                     :when (symbol? task)
+                     :when (if only (only (str task)) (and (map? spec) (:mcp/tool spec)))]
+                 [task spec])]
+     ;; test:jvm and test-jvm would both be test_jvm
+     (when-let [clashes (seq (for [[n ts] (group-by (comp tool-name first) tasks) :when (> (count ts) 1)]
+                               [n (mapv (comp str first) ts)]))]
+       (throw (ex-info (str "bb tasks share a tool name: "
+                            (str/join "; " (for [[n ts] clashes] (str (str/join ", " ts) " -> " n))))
+                       {:kind :invalid-input :clashes (vec clashes)})))
      {:tools
-      (vec (for [[task spec] (tasks-of f)
-                 :when (symbol? task)
-                 :when (if only (only (str task)) (and (map? spec) (:mcp/tool spec)))]
+      (vec (for [[task spec] tasks]
              {:name (tool-name task)
               :description (str (or (and (map? spec) (:doc spec)) (str "Run the bb task " task "."))
                                 " (Runs `bb " task "` in " (.getParent f) ".)")

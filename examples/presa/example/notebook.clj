@@ -285,7 +285,8 @@
                                      :issuer (System/getenv "NOTEBOOK_ISSUER")
                                      :jwks-url (System/getenv "NOTEBOOK_JWKS")})]
       (binding [*out* *err*]
-        (println "notebook at" url (if (System/getenv "NOTEBOOK_ISSUER") "(OAuth)" "")))
+        (println "notebook at" url (if (and (System/getenv "NOTEBOOK_ISSUER") (System/getenv "NOTEBOOK_JWKS"))
+                                     "(OAuth)" "")))
       @(promise))
     (do (stdio/serve! (notebook {:notes sample-notes}))
         (shutdown-agents))))

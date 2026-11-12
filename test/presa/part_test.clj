@@ -198,3 +198,9 @@
       (.waitFor proc 10 java.util.concurrent.TimeUnit/SECONDS)
       (is (= "closed" (when (.exists marker) (slurp marker))) "SIGTERM ran the parts' close!")
       (finally (.destroyForcibly proc) (.delete marker)))))
+
+(deftest server-options-join-the-parts
+  (let [[srv _] (part/server {:parts [{:tools [(tool "a" "a")]}] :tools [(tool "b" "b")]})]
+    (is (every? #(some? (presa.server/tool srv %)) ["a" "b"]) "both the part's tool and the option's"))
+  (is (thrown? Exception (part/server {:parts [{:tools [(tool "a" "a")]}] :tools [(tool "a" "again")]}))
+      "a duplicate is refused as between parts"))

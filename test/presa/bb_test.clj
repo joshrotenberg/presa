@@ -68,3 +68,11 @@
     (is (= 1 (count (:resources p))))
     (part/with-client {:parts [p]}
       (fn [c] (is (re-find #"greet" (get-in (client/read-resource c (:uri (first (:resources p)))) [0 "text"])))))))
+
+(deftest task-names-that-collide
+  (let [f (java.io.File/createTempFile "presa-bb" ".edn")]
+    (spit f "{:tasks {test:jvm {:mcp/tool true :task (println 1)} test-jvm {:mcp/tool true :task (println 2)}}}")
+    (try
+      (let [e (try (pb/task-tools {:bb-edn (.getPath f)}) (catch Exception e e))]
+        (is (re-find #"test:jvm, test-jvm -> test_jvm|test-jvm, test:jvm -> test_jvm" (ex-message e))))
+      (finally (.delete f)))))
