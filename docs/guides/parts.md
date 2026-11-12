@@ -87,10 +87,14 @@ earlier parts take precedence; `serve!` logs what was shadowed.
 
 ## Another server as a part
 
-`proxy` starts an MCP server over stdio and returns a part of the tools and
-resources it advertises, each call forwarded to it with its progress and log
-messages; its `:close!` ends the connection and the process. A forwarded
-call may take `:timeout-ms` (default 600000, as a bb task tool). A server can front another one and keep its own tools first:
+`proxy` starts an MCP server over stdio and returns a part of the tools,
+prompts, resources and resource templates it advertises, built by
+`presa.proxy/part`: each call is forwarded to it with its input requests,
+progress, log messages and cancellation, as `presa.proxy` does. Its
+`:close!` ends the connection and the process. A forwarded call may take
+`:timeout-ms` (default 600000, as a bb task tool). The definitions are
+listed once; to follow a backend's list changes, use
+`presa.proxy/proxy-server`. A server can front another one and keep its own tools first:
 
 <!-- no-run -->
 ```clojure

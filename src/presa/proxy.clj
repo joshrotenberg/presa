@@ -263,6 +263,17 @@
    :resources (if (has? client "resources") (vec (resource-defs client parked)) [])
    :templates (if (has? client "resources") (vec (template-defs client parked)) [])})
 
+(defn part
+  "One backend, {:prefix p :client c} (`:separator` overrides \"_\"), as a
+  presa.part part: its tools and prompts under the prefix, its resources and
+  resource templates, each call forwarded as proxy-server forwards it (input,
+  progress, logs, cancellation; see the namespace doc). The definitions are
+  listed once: a part does not follow the backend's list changes, which
+  proxy-server does. The caller closes the client."
+  [backend]
+  (let [{:keys [tools prompts resources templates]} (catalog (assoc backend ::parked (atom {})))]
+    {:tools tools :prompts prompts :resources resources :resource-templates templates}))
+
 (defn- check-unique! [kind ks]
   (when-let [dups (seq (for [[k n] (frequencies ks) :when (> n 1)] k))]
     (throw (ex-info (str "Backends share " kind ": " (vec dups)) {:kind :invalid-input kind (vec dups)}))))

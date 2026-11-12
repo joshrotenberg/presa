@@ -96,6 +96,30 @@
               (is (re-find #"timed out" (client/text r))))))
         (finally ((:close! p)))))))
 
+(deftest proxying-prompts-templates-and-input
+  (let [p (part/proxy (backend '{:name "b" :version "1"
+                                 :prompts [{:name "intro" :arguments [{:name "who" :required true}]
+                                            :handler (fn [{:strs [who]} _] (str "introduce " who))}]
+                                 :resource-templates [{:uri-template "b:/items/{id}" :name "item"
+                                                       :handler (fn [{:strs [id]} _] (str "item " id))}]
+                                 :tools [{:name "ask"
+                                          :handler (fn [_ ctx]
+                                                     (if-let [r (s/input-response ctx "who")]
+                                                       (str "hi " (get-in r ["content" "name"]))
+                                                       (s/input-required {"who" {"method" "elicitation/create"
+                                                                                 "params" {"mode" "form" "message" "who?"
+                                                                                           "requestedSchema" {"type" "object"}}}}
+                                                                         {})))}]})
+                      {:stderr (fn [_])})]
+    (try
+      (part/with-client {:parts [(dissoc p :close!)]}
+        {:handlers {"elicitation/create" (fn [_] {"action" "accept" "content" {"name" "Ada"}})}}
+        (fn [c]
+          (is (= "introduce ada" (get-in (client/get-prompt c "intro" {"who" "ada"}) ["messages" 0 "content" "text"])))
+          (is (= "item 7" (get-in (client/read-resource c "b:/items/7") [0 "text"])))
+          (is (= "hi Ada" (client/text (client/call-tool c "ask"))) "the backend's input request reaches the caller")))
+      (finally ((:close! p))))))
+
 (deftest duplicates
   (let [a {:tools [(tool "a" "A")] :resources [{:uri "x:/r" :name "r" :handler (fn [_] "")}]}]
     (is (thrown-with-msg? Exception #"Duplicate tool a" (part/combine [a {:tools [(tool "a" "B")]}])))
