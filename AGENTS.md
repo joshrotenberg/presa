@@ -16,7 +16,7 @@ changes.
 | `examples/` | The hello, notebook and Clojars example servers, the notebook's client and REPL walkthroughs |
 | `docs/` | Guides (their Clojure blocks run as tests) and protocol reference |
 | `conformance/` | The official conformance runner's harness, fixture, baselines and vendored schema |
-| `dev/` | `lint.clj` (`bb lint`) and `host_probe.clj` (what real hosts send) |
+| `dev/` | `lint.clj` (`bb lint`), `fmt.clj` (`bb fmt`) and `host_probe.clj` (what real hosts send) |
 | `build.clj` | The jar and Clojars deploy (`clojure -T:build jar`) |
 
 ## Checks
@@ -42,6 +42,9 @@ client lanes (`bb conformance client <revision>`, against
   holds the configuration: `defalias` and `with-server` are linted as `def` and
   `let`, and `:locking-suspicious-lock` is off because every lock is a shared
   object held in a session or state map.
+- cljfmt would change no tracked Clojure file in those paths. `bb lint` runs
+  it under Babashka (`dev/fmt.clj`, configured in `.cljfmt.edn`), and `bb fmt`
+  rewrites what it would change.
 - Commit subjects in `origin/main..HEAD` use conventional-commit prefixes: `feat`,
   `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`,
   `revert`, with an optional scope and `!` (git's own `Revert "..."` subject

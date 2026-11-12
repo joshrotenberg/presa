@@ -3,6 +3,8 @@
 ;; - clj-kondo (through its Babashka pod, configured in .clj-kondo/config.edn)
 ;;   finds no errors or warnings in the Clojure sources; info findings are
 ;;   printed as notes
+;; - cljfmt (dev/fmt.clj, configured in .cljfmt.edn) would change no tracked
+;;   Clojure file; bb fmt fixes them
 ;; - tracked *.md *.clj *.edn *.json files have no em dashes (vendored
 ;;   files under conformance/schema/ aside)
 ;; - commit subjects in <base>..HEAD (merge commits aside) use
@@ -69,7 +71,10 @@
       problem)))
 
 (when-not base? (println "commit checks skipped:" base "does not name a commit"))
-(doseq [p (concat kondo-problems dash-problems commit-problems)] (println p))
-(if (seq (concat kondo-problems dash-problems commit-problems))
+(load-file "dev/fmt.clj")
+(def fmt-problems ((resolve 'fmt/problems)))
+
+(doseq [p (concat kondo-problems fmt-problems dash-problems commit-problems)] (println p))
+(if (seq (concat kondo-problems fmt-problems dash-problems commit-problems))
   (System/exit 1)
   (println "lint ok"))

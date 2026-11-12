@@ -49,12 +49,16 @@
 (def walkthroughs ["examples/presa/example/notebook_repl.clj"])
 
 (defn- comment-body
-  "The lines between a line \"(comment\" and the next line \")\"."
+  "The lines after a line \"(comment\", to the end of the file, without the
+  comment form's closing paren (on a line of its own or after the last
+  form)."
   [text]
-  (->> (str/split-lines text)
-       (drop-while #(not= "(comment" (str/trim %)))
-       rest
-       (take-while #(not= ")" (str/trim %)))))
+  (let [lines (->> (str/split-lines text)
+                   (drop-while #(not= "(comment" (str/trim %)))
+                   rest
+                   vec)
+        body (str/trimr (str/join "\n" lines))]
+    (str/split-lines (subs body 0 (dec (count body))))))
 
 (defn- run-walkthrough [file]
   (let [text (slurp file)
