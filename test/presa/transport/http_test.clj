@@ -167,6 +167,62 @@
                                   (assoc with-session "mcp-protocol-version" "2025-11-25")))))
         (is (= 404 (:status (post url {"jsonrpc" "2.0" "id" 4 "method" "tools/list"} {"mcp-session-id" "unknown"}))))))))
 
+(defn- initialize!
+  "Open an initialize-era session; the headers for requests on it."
+  [url]
+  (let [r (post url {"jsonrpc" "2.0" "id" 0 "method" "initialize"
+                     "params" {"protocolVersion" "2025-06-18" "capabilities" {} "clientInfo" {"name" "c" "version" "0"}}})]
+    (when (= 200 (:status r))
+      {"mcp-session-id" (:session-id r) "mcp-protocol-version" "2025-06-18"})))
+
+(defn- list-status [url session]
+  (:status (post url {"jsonrpc" "2.0" "id" 1 "method" "tools/list"} session)))
+
+(deftest idle-sessions-are-closed
+  (testing "an idle session is closed when the next initialize arrives"
+    (with-server [s {:session-idle-ms 100}]
+      (let [url (:url s)
+            a (initialize! url)]
+        (is (= 200 (list-status url a)))
+        (Thread/sleep 200)
+        (let [b (initialize! url)]
+          (is (= 404 (list-status url a)) "the idle session is gone")
+          (is (= 200 (list-status url b)))))))
+  (testing "a session with a request in flight is kept"
+    (let [release (promise)
+          started (promise)
+          s (http/serve! (server/server {:name "t" :version "1" :versions protocol/versions
+                                         :tools [{:name "wait" :handler (fn [_ _] (deliver started true) @release "done")}]})
+                         {:session-idle-ms 100})]
+      (try
+        (let [url (:url s)
+              a (initialize! url)
+              call (future (post url {"jsonrpc" "2.0" "id" 2 "method" "tools/call" "params" {"name" "wait"}}
+                                 (assoc a "mcp-name" "wait")))]
+          (is (true? (deref started 5000 false)))
+          (Thread/sleep 200)
+          (initialize! url)
+          (deliver release true)
+          (is (= 200 (:status (deref call 5000 nil))))
+          (is (= 200 (list-status url a)) "the busy session survived the sweep"))
+        (finally ((:stop! s)))))))
+
+(deftest sessions-are-capped
+  (with-server [s {:max-sessions 2}]
+    (let [url (:url s)
+          a (initialize! url)]
+      (is (some? (initialize! url)))
+      (let [r (post url {"jsonrpc" "2.0" "id" 0 "method" "initialize"
+                         "params" {"protocolVersion" "2025-06-18" "capabilities" {} "clientInfo" {"name" "c" "version" "0"}}})]
+        (is (= 503 (:status r)))
+        (is (= "Too many sessions" (get-in (json-body r) ["error" "message"]))))
+      (testing "closing a session makes room"
+        (let [builder (doto (HttpRequest/newBuilder (URI. url))
+                        (.header "mcp-session-id" (get a "mcp-session-id"))
+                        (.DELETE))]
+          (is (= 204 (.statusCode (.send (HttpClient/newHttpClient) (.build builder) (HttpResponse$BodyHandlers/ofString))))))
+        (is (some? (initialize! url)))))))
+
 (deftest clients-over-http
   (with-server [s {}]
     (doseq [versions [[protocol/latest-version] ["2025-11-25"]]]

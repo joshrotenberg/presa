@@ -128,8 +128,12 @@
 
 (defn- sse-event [message] (str "data: " (write-json message) "\n\n"))
 
+(defn- now-ms [] (System/currentTimeMillis))
+
 (defn- new-session [session]
   {:session (atom session)
+   ;; when a request last used or finished on the session
+   :last-seen (atom (now-ms))
    :lock (Object.)
    :outgoing (atom {})
    :running (atom {})
@@ -230,7 +234,8 @@
                          (try (hk/close ch) (catch Throwable _)))
                        (finally
                          (when-let [[registry k] (and (some? request-id) running)]
-                           (swap! registry dissoc k))))))]
+                           (swap! registry dissoc k))
+                         (when session (reset! (:last-seen session) (now-ms)))))))]
         ;; running is [registry key]: where a posted notifications/cancelled
         ;; can find this request
         (when-let [[registry k] (and (some? request-id) running)]
@@ -276,6 +281,41 @@
             (> (+ total n) max-bytes) nil
             :else (do (.write out buf 0 n) (recur (+ total n)))))))))
 
+(defn- idle?
+  "Whether a session entry has nothing in flight, no open GET stream, and
+  has not been used for idle-ms."
+  [entry idle-ms now]
+  (and (empty? @(:running entry))
+       (nil? @(:stream entry))
+       (>= (- now @(:last-seen entry)) idle-ms)))
+
+(defn- close-entry!
+  "Close a session entry: end its server session and its GET stream."
+  [srv entry]
+  (server/close-session! srv @(:session entry))
+  (when-let [ch @(:stream entry)] (try (hk/close ch) (catch Throwable _))))
+
+(defn- sweep!
+  "Remove and close the idle sessions."
+  [srv sessions idle-ms]
+  (let [now (now-ms)]
+    (doseq [[sid entry] @sessions
+            :when (idle? entry idle-ms now)]
+      ;; remove first, so a concurrent sweep or DELETE closes it once
+      (let [[before after] (swap-vals! sessions (fn [m] (if (identical? entry (get m sid)) (dissoc m sid) m)))]
+        (when (and (identical? entry (get before sid)) (not (contains? after sid)))
+          (close-entry! srv entry))))))
+
+(def default-session-idle-ms
+  "How long an initialize-era session may sit idle before it is closed,
+  unless :session-idle-ms says otherwise."
+  1800000)
+
+(def default-max-sessions
+  "How many initialize-era sessions the server holds unless :max-sessions
+  says otherwise."
+  1000)
+
 (defn handler
   "A ring handler serving srv. Options:
 
@@ -296,11 +336,19 @@
                       ids are not unique across callers
   - :keepalive-ms     how often an idle subscription stream gets a comment,
                       which also finds clients that have gone (default 15000)
+  - :session-idle-ms  an initialize-era session with no request in flight
+                      and no open GET stream is closed once unused this long
+                      (default 1800000); idle sessions are swept when an
+                      initialize arrives
+  - :max-sessions     at this many initialize-era sessions, initialize gets
+                      503 (default 1000)
   - :log              (fn [& parts]) for diagnostics"
   ([srv] (handler srv {}))
-  ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms max-body-bytes cancellation]
+  ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms max-body-bytes cancellation
+                session-idle-ms max-sessions]
          auth-config :auth
-         :or {path "/mcp" log (fn [& _]) keepalive-ms 15000 max-body-bytes default-max-body-bytes}}]
+         :or {path "/mcp" log (fn [& _]) keepalive-ms 15000 max-body-bytes default-max-body-bytes
+              session-idle-ms default-session-idle-ms max-sessions default-max-sessions}}]
    (let [sessions (atom {})
          ;; 2026-07-28 requests in flight by [subject id], for :cancellation :subject
          stateless-running (atom {})]
@@ -315,7 +363,9 @@
                                [stateless-running [subject (get message "id")]]))
              session-of (fn [sid]
                           (when-let [entry (get @sessions sid)]
-                            (when (= (:subject entry) (:subject (caller))) entry)))]
+                            (when (= (:subject entry) (:subject (caller)))
+                              (reset! (:last-seen entry) (now-ms))
+                              entry)))]
          (cond
            (and auth-config (= (:metadata-path auth-config) (:uri req)))
            (auth/metadata-response auth-config req)
@@ -335,8 +385,7 @@
            (and (= :delete (:request-method req)) sid)
            (if-let [entry (session-of sid)]
              (do (swap! sessions dissoc sid)
-                 (server/close-session! srv @(:session entry))
-                 (when-let [ch @(:stream entry)] (try (hk/close ch) (catch Throwable _)))
+                 (close-entry! srv entry)
                  {:status 204})
              (rejection 404 :invalid-request "Session not found"))
 
@@ -403,6 +452,11 @@
                          (when (= "tools/call" method) (check-param-headers srv req message))
                          (execute srv req message {:stateless? true :log log :keepalive-ms keepalive-ms :identity (caller)
                                                   :running (stateless-key message)}))
+
+                     (and (= "initialize" method)
+                          (do (sweep! srv sessions session-idle-ms)
+                              (>= (count @sessions) max-sessions)))
+                     (json-response 503 (rpc/error (get message "id") :internal-error "Too many sessions"))
 
                      (= "initialize" method)
                      (let [id (str (UUID/randomUUID))

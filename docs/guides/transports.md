@@ -75,6 +75,8 @@ Options of `handler` and `serve!`:
 | `:allowed-hosts` | any | a set or predicate of `Host` values to accept |
 | `:max-body-bytes` | 2000000 | a larger body gets 413 |
 | `:keepalive-ms` | 15000 | comments on idle subscription streams, which also find clients that left |
+| `:session-idle-ms` | 1800000 | an initialize-era session with nothing in flight and no GET stream is closed once unused this long |
+| `:max-sessions` | 1000 | at this many initialize-era sessions, `initialize` gets 503 |
 | `:auth` | none | a resource-server config; see [authorization.md](authorization.md) |
 | `:cancellation` | none | `:subject` lets a posted cancel stop the same subject's request |
 | `:log` | none | `(fn [& parts])` for diagnostics |
@@ -93,4 +95,8 @@ OAuth (see [authorization.md](authorization.md)); `:connect-timeout-ms`
 Over stdio the connection is the session. Over HTTP, `initialize` answers
 with an `Mcp-Session-Id` that later requests carry; GET opens the session's
 event stream, where the server sends requests and notifications outside
-any request; DELETE ends the session. See [initialize-era.md](initialize-era.md).
+any request; DELETE ends the session. A session with no request in flight
+and no open GET stream is closed once it has gone unused for
+`:session-idle-ms`; idle sessions are swept when an `initialize` arrives.
+A request on a closed session gets 404, and the client starts a new one.
+See [initialize-era.md](initialize-era.md).
