@@ -226,3 +226,15 @@
         ;; creating a task reaps the expired ones
         (result srv "tools/call" {"name" "slow" "arguments" {"ms" 1}} declared)
         (is (future-cancelled? work))))))
+
+(deftest task-state-comes-back-as-json
+  (let [srv (make-server {:tools [{:name "stateful" :task :optional
+                                   :handler (fn [_ ctx]
+                                              (if (server/input-response ctx "q")
+                                                (pr-str [(:state ctx) (keys (:input-responses ctx))])
+                                                (server/input-required {"q" (input/elicit "q?" {"type" "object"})}
+                                                                       {:step 1})))}]})
+        id (get (result srv "tools/call" {"name" "stateful"} declared) "taskId")]
+    (wait-status srv id "input_required")
+    (result srv "tasks/update" {"taskId" id "inputResponses" {"q" {"action" "accept" "content" {}}}} declared)
+    (is (= "[{\"step\" 1} (\"q\")]" (get-in (wait-status srv id "completed") ["result" "content" 0 "text"])))))

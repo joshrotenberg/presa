@@ -21,6 +21,13 @@
 (defn json-text [v]
   (json/write-str v :escape-slash false :escape-unicode false))
 
+(defn as-json
+  "v as it reads back from JSON: string keys, vectors, no keywords; nil
+  stays nil. requestState goes through this on every path, as it travels
+  in a token on 2026-07-28."
+  [v]
+  (when (some? v) (json/read-str (json-text v))))
+
 (defn text
   "A tool result with one text content block."
   [s]

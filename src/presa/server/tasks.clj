@@ -3,7 +3,7 @@
   call's task policy, a task's work, and tasks/* methods."
   (:require [presa.protocol :as protocol]
             [presa.tasks :as tasks]
-            [presa.server.core :refer [check-output! emit! error error-code input-required? tool-result]]))
+            [presa.server.core :refer [as-json check-output! emit! error error-code input-required? tool-result]]))
 
 ;; Tasks
 
@@ -50,8 +50,10 @@
                                            @p))
                             answers (into {} (map (fn [[k p]] [k (wait p)])) waiters)]
                         (recur (assoc ctx
-                                      :input-responses (merge (:input-responses ctx) answers)
-                                      :state state)
+                                      ;; the latest round's answers, and the state as
+                                      ;; JSON, as on every other path
+                                      :input-responses answers
+                                      :state (as-json state))
                                (inc round)))))))
             result (tool-result v)]
         (check-output! srv tool result)

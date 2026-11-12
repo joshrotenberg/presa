@@ -270,3 +270,20 @@
         (client/call-tool c "ask")
         (is (= :unsupported (deref outcome 5000 :no-outcome)))
         (finally (client/close c))))))
+
+(def ^:private stateful-tool
+  {:name "stateful" :task :optional
+   :handler (fn [_ ctx]
+              (if (server/input-response ctx "q")
+                (pr-str (:state ctx))
+                (server/input-required {"q" (input/elicit "q?" {"type" "object"})} {:step 1})))})
+
+(deftest state-comes-back-as-json-on-every-path
+  (let [srv (server/server {:name "t" :version "1" :versions protocol/versions :tools [stateful-tool]})]
+    (doseq [versions [[protocol/latest-version] ["2025-11-25"]]]
+      (let [c (client/connect (client/in-process srv)
+                              {:versions versions
+                               :handlers {"elicitation/create" (fn [_] {"action" "accept" "content" {}})}})]
+        (try
+          (is (= "{\"step\" 1}" (client/text (client/call-tool c "stateful"))) (str "over " versions))
+          (finally (client/close c)))))))

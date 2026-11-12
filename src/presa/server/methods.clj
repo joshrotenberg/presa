@@ -7,7 +7,7 @@
             [presa.protocol :as protocol]
             [presa.schema :as schema]
             [presa.tasks :as tasks]
-            [presa.server.core :refer [check-output! client-request! emit! error input-required? tool-error tool-result]]
+            [presa.server.core :refer [as-json check-output! client-request! emit! error input-required? tool-error tool-result]]
             [presa.server.catalog :refer [capabilities]]
             [presa.server.access :refer [check-permitted! permitted?]]
             [presa.server.shape :refer [paged wire-prompt wire-resource wire-template wire-tool]]
@@ -56,7 +56,7 @@
             (when (> round max-input-rounds)
               (throw (error :internal-error (str "The handler asked for input more than " max-input-rounds " times"))))
             (recur (assoc context
-                          :state state
+                          :state (as-json state)
                           :input-responses (into {}
                                                  (map (fn [[id {:strs [method params]}]]
                                                         [id (client-request! context method params)]))
