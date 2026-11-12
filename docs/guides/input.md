@@ -47,7 +47,11 @@ handler runs again. presa:
   default is random per server map, so tokens do not survive a restart;
 - sends `ttlMs: 0` on a `resources/read` result that took input.
 
-Multi-round flows put what they need in the state:
+Multi-round flows put what they need in the state. The state comes back
+as JSON data on every path (2026-07-28, initialize-era sessions and tasks):
+string keys, vectors for sequences, no keywords. `:input-responses` holds
+the latest round's answers only, so a flow keeps earlier answers in its
+state:
 
 ```clojure
 (def two-steps
