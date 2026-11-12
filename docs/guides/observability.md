@@ -52,9 +52,14 @@ updates, with messages of at most 4096 bytes.
 
 `:on-event` receives a map per event: `:request/start` and `:request/stop`
 (with `:duration-ms` and `:outcome`: `:ok`, `:error` with `:error-code`, or
-`:cancelled`), `:request/rejected` for a request refused before it ran, and
-`:tool/error` for a handler that threw. Exceptions from the function are
-ignored.
+`:cancelled`), `:request/rejected` for a request refused before it ran,
+`:tool/error` for a tool handler that threw, and `:request/error` (with
+`:exception`) for another handler that threw. Exceptions from the function
+are ignored.
+
+The client gets `-32603 "Internal error"` for an unexpected exception,
+without its message, which can carry file paths, queries or other internals;
+`:expose-errors? true` on the server adds the message, for development.
 
 ```clojure
 (filter #(= "tools/call" (:method %)) @events)

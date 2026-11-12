@@ -126,6 +126,11 @@
   - :max-progress-updates, :max-log-messages  the most progress
       notifications and log messages one request sends (default 1000 each);
       later ones are dropped. nil is no cap
+  - :expose-errors?  put an unexpected exception's message in its -32603
+      answer, for development (default false: the answer says
+      \"Internal error\"; the exception goes to :on-event as
+      :request/error). Tool handlers' exceptions are isError results with
+      their message either way
   - :on-event  (fn [event]) for instrumentation: each event is a map with
       :event and its fields:
         :request/start     :method :request-id :version
@@ -137,6 +142,8 @@
         :tool/error        :tool, :request-id (or :task-id for a task),
                            :exception, for a handler that threw (the
                            client gets an isError result)
+        :request/error     :method :request-id :exception, for another
+                           handler that threw (the client gets -32603)
       Exceptions the function throws are ignored.
   - :required-scopes  {[kind key] [scope ..]}, the scopes a component needs:
       kind is :tool, :prompt (keyed by name), :resource (by URI) or
@@ -164,7 +171,8 @@
   sent."
   [{:keys [name version title instructions tools resources resource-templates prompts
            versions page-size cache logging log-level validate? state-secret state-ttl-ms keywordize-args?
-           list-changed subscribe max-subscriptions on-event required-scopes default-scopes validator]
+           list-changed subscribe max-subscriptions on-event required-scopes default-scopes validator
+           expose-errors?]
     tasks-opts :tasks
     :as opts
     :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000
@@ -209,6 +217,7 @@
                :max-progress-updates (get opts :max-progress-updates max-progress-updates)
                :max-log-messages (get opts :max-log-messages max-log-messages)
                :on-event on-event
+               :expose-errors? (boolean expose-errors?)
                :task-store (when tasks-opts (tasks/store tasks-opts))
                :required-scopes (or required-scopes {})
                :default-scopes (vec default-scopes)
@@ -288,7 +297,11 @@
            fail (fn [e]
                   (if (:presa/error (ex-data e))
                     (error-response id e)
-                    (rpc/error id :internal-error (str "Internal error: " (ex-message e)))))
+                    (do (emit! srv {:event :request/error :method (get message "method") :request-id id :exception e})
+                        ;; the exception's text stays on the server unless asked for
+                        (rpc/error id :internal-error (if (:expose-errors? srv)
+                                                        (str "Internal error: " (ex-message e))
+                                                        "Internal error")))))
            prepared (try
                       (let [[session' respond] (request srv session message extra)]
                         {:session session'
