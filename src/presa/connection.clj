@@ -16,19 +16,24 @@
            :presa/related-request, that request's id.
   - :log   (fn [& parts]) for diagnostics
   - :session  the initial session (default {})
+  - :drain-timeout-ms  how long close! lets requests in flight finish
+           before it cancels the rest: each gets its cancel!, so
+           (:cancelled? context) is true, and its thread is interrupted.
+           nil (the default) waits for all of them; 0 cancels at once
 
   Returns a map:
 
   - :receive!  (fn [message]) takes one parsed message from the client. It
                settles the session before it returns, and runs the work on
                another thread.
-  - :close!    (fn []) waits for requests in flight and returns. Requests
-               sent to the client still waiting get :kind :closed.
+  - :close!    (fn []) waits for requests in flight (see
+               :drain-timeout-ms) and returns. Requests sent to the client
+               still waiting get :kind :closed.
   - :session   (fn []) the current session
 
   Handlers run with *out* bound to *err*, so printing never reaches a
   protocol stream on stdout."
-  [srv {:keys [send log session] :or {log (fn [& _]) session {}}}]
+  [srv {:keys [send log session drain-timeout-ms] :or {log (fn [& _]) session {}}}]
   (let [session (atom session)
         lock (Object.)
         ;; requests in flight by id: {:cancel! f :work future :token t}
@@ -106,7 +111,18 @@
                        :when (= "subscriptions/listen" method)]
                  (cancel!)
                  (when work (future-cancel work)))
-               (run! (fn [{:keys [work]}] (when work (try @work (catch Exception _))))
-                     (vals @running))
+               (if drain-timeout-ms
+                 (let [deadline (+ (System/currentTimeMillis) drain-timeout-ms)]
+                   (run! (fn [{:keys [work]}]
+                           (when work
+                             (try (deref work (max 0 (- deadline (System/currentTimeMillis))) nil)
+                                  (catch Exception _))))
+                         (vals @running))
+                   ;; what is still running after the deadline is cancelled
+                   (doseq [{:keys [cancel! work]} (vals @running)]
+                     (cancel!)
+                     (when work (future-cancel work))))
+                 (run! (fn [{:keys [work]}] (when work (try @work (catch Exception _))))
+                       (vals @running)))
                nil)
      :session (fn [] @session)}))

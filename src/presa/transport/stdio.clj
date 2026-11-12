@@ -51,17 +51,20 @@
 
 (defn serve!
   "Serve srv, a presa.server/server map, until the input ends, then wait for
-  requests in flight and return. Options:
+  requests in flight (see :drain-timeout-ms) and return. Options:
 
   - :in   a java.io.Reader to read requests from (default: stdin)
   - :out  a java.io.Writer to write responses to (default: stdout)
   - :log  (fn [& parts]) for diagnostics (default: a line on stderr)
   - :max-line-bytes  the limit on one message, counting its newline
            (default 2000000); a longer line gets -32600 and is skipped
+  - :drain-timeout-ms  once the input ends, how long requests in flight
+           may finish before the rest are cancelled (default nil: wait
+           for all of them; 0 cancels at once). See presa.connection/open
 
   Tool handlers run with *out* bound to *err*."
   ([srv] (serve! srv {}))
-  ([srv {:keys [in out log max-line-bytes] :or {max-line-bytes default-max-line-bytes}}]
+  ([srv {:keys [in out log max-line-bytes drain-timeout-ms] :or {max-line-bytes default-max-line-bytes}}]
    (let [in (java.io.BufferedReader. (or in (io/reader System/in :encoding "UTF-8")))
          out (or out (io/writer System/out :encoding "UTF-8"))
          log (or log stderr-log)
@@ -71,7 +74,7 @@
                     (locking lock
                       (.write ^java.io.Writer out ^String line)
                       (.flush ^java.io.Writer out))))
-         {:keys [receive! close!]} (connection/open srv {:send write! :log log})]
+         {:keys [receive! close!]} (connection/open srv {:send write! :log log :drain-timeout-ms drain-timeout-ms})]
      (loop []
        (if-let [line (read-line-limited in max-line-bytes)]
          (do (if (= ::too-long line)

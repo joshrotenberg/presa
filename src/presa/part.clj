@@ -91,10 +91,10 @@
   "Serve the parts over stdio until stdin closes, then close them and return
   what their :close! functions returned. The parts are also closed when the
   process ends another way, such as SIGTERM or SIGINT; they are closed once.
-  opts are `server`'s plus presa.transport.stdio/serve!'s :in, :out, :log
-  and :max-line-bytes."
+  opts are `server`'s plus presa.transport.stdio/serve!'s :in, :out, :log,
+  :max-line-bytes and :drain-timeout-ms."
   [opts]
-  (let [stdio-keys [:in :out :log :max-line-bytes]
+  (let [stdio-keys [:in :out :log :max-line-bytes :drain-timeout-ms]
         [srv p] (server (apply dissoc opts stdio-keys))
         log (or (:log opts) (fn [& parts] (binding [*out* *err*] (apply println parts))))
         closed (delay ((:close! p)))]
