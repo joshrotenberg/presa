@@ -70,6 +70,24 @@
       (is (= -32603 (get-in by-id [3 "error" "code"])))
       (is (re-find #"deep" (get-in by-id [3 "error" "message"]))))))
 
+(deftest requests-in-flight-are-cancelled-after-the-drain-timeout
+  (let [interrupted (promise)
+        cancelled (promise)
+        srv (server/server {:name "t" :version "1"
+                            :tools [{:name "long"
+                                     :handler (fn [_ ctx]
+                                                (try (Thread/sleep 30000)
+                                                     (catch InterruptedException _
+                                                       (deliver cancelled ((:cancelled? ctx)))
+                                                       (deliver interrupted true)))
+                                                "late")}]})
+        t0 (System/currentTimeMillis)]
+    (stdio/serve! srv {:in (java.io.StringReader. (line (rpc/request 1 "tools/call" {"name" "long" "_meta" meta-2026})))
+                       :out (java.io.StringWriter.) :log (fn [& _]) :drain-timeout-ms 200})
+    (is (< (- (System/currentTimeMillis) t0) 5000) "serve! returned without waiting out the call")
+    (is (true? (deref interrupted 2000 false)) "the handler's thread was interrupted")
+    (is (true? (deref cancelled 2000 false)) "(:cancelled? context) was true")))
+
 (deftest tool-calls-run-concurrently
   (let [released (promise)
         srv (server/server {:name "t" :version "1"

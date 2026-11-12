@@ -15,6 +15,7 @@ stdin closes, then waits for requests in flight. Options:
 | `:in`, `:out` | stdin, stdout | a Reader and a Writer, for tests |
 | `:log` | a line on stderr | `(fn [& parts])` for diagnostics |
 | `:max-line-bytes` | 2000000 | a longer line gets -32600 and is skipped |
+| `:drain-timeout-ms` | nil | once stdin closes, how long requests in flight may finish before the rest are cancelled (`cancel!`, then an interrupt); nil waits for all, 0 cancels at once |
 
 `presa.transport.stdio/command` is the client side: it starts a server
 subprocess and speaks to it. Options `:env`, `:dir`, `:stderr` (`:inherit`,
