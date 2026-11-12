@@ -155,3 +155,24 @@
       (is (deref interrupted 2000 false))
       (is (= :done (deref done 2000 :timeout)))
       (is (= "" (str out))))))
+
+(deftest closing-ends-a-stubborn-server-and-its-children
+  (let [pids (java.io.File/createTempFile "presa-stdio" ".pids")
+        ;; sh ignores SIGTERM, and so does the sleep it starts
+        t ((stdio/command ["sh" "-c" (str "trap '' TERM; sleep 60 & echo $$ $! > " (.getPath pids) "; wait")]
+                          {:close-timeout-ms 200 :stderr :discard})
+           {:on-message (fn [_]) :on-close (fn [])})
+        alive? (fn [pid] (.orElse (.map (java.lang.ProcessHandle/of pid)
+                                        (reify java.util.function.Function (apply [_ h] (.isAlive ^java.lang.ProcessHandle h))))
+                                  false))]
+    (try
+      (let [ids (loop [n 0] (let [s (str/trim (slurp pids))]
+                              (if (or (seq s) (> n 50)) s (do (Thread/sleep 50) (recur (inc n))))))
+            [sh-pid sleep-pid] (map parse-long (str/split ids #"\s+"))]
+        (is (and (alive? sh-pid) (alive? sleep-pid)))
+        ((:close! t))
+        (is (loop [n 0] (cond (not (or (alive? sh-pid) (alive? sleep-pid))) true
+                              (> n 40) false
+                              :else (do (Thread/sleep 50) (recur (inc n)))))
+            "the server and its child are gone"))
+      (finally (.delete pids)))))

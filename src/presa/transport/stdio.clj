@@ -100,17 +100,23 @@
 
   - :env     extra environment variables, a map of strings
   - :dir     the working directory
-  - :stderr  :inherit (default) to pass the server's stderr through, or
-             (fn [line]) to receive each line
+  - :stderr  :inherit (default) to pass the server's stderr through,
+             (fn [line]) to receive each line, or anything else (such as
+             :discard) to drop it
   - :close-timeout-ms  how long close waits for the process to exit after
-             its stdin closes, before destroying it (default 2000)"
+             its stdin closes, before ending it (default 2000): its
+             descendants and then it get SIGTERM, and whatever is left a
+             second later SIGKILL"
   ([cmd] (command cmd {}))
   ([cmd {:keys [env dir stderr close-timeout-ms] :or {stderr :inherit close-timeout-ms 2000}}]
    (fn [{:keys [on-message on-close]}]
      (let [pb (java.lang.ProcessBuilder. ^java.util.List (mapv str cmd))
            _ (when dir (.directory pb (io/file dir)))
            _ (when env (let [e (.environment pb)] (doseq [[k v] env] (.put e (str k) (str v)))))
-           _ (when (= :inherit stderr) (.redirectError pb java.lang.ProcessBuilder$Redirect/INHERIT))
+           _ (cond
+               (= :inherit stderr) (.redirectError pb java.lang.ProcessBuilder$Redirect/INHERIT)
+               ;; an undrained pipe would block the server once full
+               (not (fn? stderr)) (.redirectError pb java.lang.ProcessBuilder$Redirect/DISCARD))
            process (.start pb)
            out (io/writer (.getOutputStream process) :encoding "UTF-8")
            lock (Object.)
@@ -143,6 +149,11 @@
         :close! (fn []
                   (try (.close ^java.io.Writer out) (catch Exception _))
                   (when-not (.waitFor process (long close-timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
-                    (.destroy process)
-                    (.waitFor process (long 1000) java.util.concurrent.TimeUnit/MILLISECONDS))
+                    ;; its children first: once it is gone they are reparented
+                    (let [children (vec (iterator-seq (.iterator (.descendants process))))]
+                      (run! #(.destroy ^java.lang.ProcessHandle %) children)
+                      (.destroy process)
+                      (when-not (.waitFor process (long 1000) java.util.concurrent.TimeUnit/MILLISECONDS)
+                        (.destroyForcibly process))
+                      (run! #(when (.isAlive ^java.lang.ProcessHandle %) (.destroyForcibly ^java.lang.ProcessHandle %)) children)))
                   (.join ^Thread reader 1000))}))))
