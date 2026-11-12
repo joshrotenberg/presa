@@ -39,7 +39,16 @@
                                                 (assoc :status "input_required")
                                                 (update :input-requests merge requests)
                                                 (update :waiters merge waiters)))
-                      (let [answers (into {} (map (fn [[k p]] [k @p])) waiters)]
+                      (let [{:keys [created-at ttl-ms]} (get @(:tasks st) id)
+                            ;; wait no longer than the task lives: once it
+                            ;; expires nothing can answer it
+                            wait (fn [p] (if (and created-at ttl-ms)
+                                           (let [v (deref p (max 0 (- (+ created-at ttl-ms) (System/currentTimeMillis))) ::expired)]
+                                             (if (= ::expired v)
+                                               (throw (error :internal-error "The task expired waiting for input"))
+                                               v))
+                                           @p))
+                            answers (into {} (map (fn [[k p]] [k (wait p)])) waiters)]
                         (recur (assoc ctx
                                       :input-responses (merge (:input-responses ctx) answers)
                                       :state state)
