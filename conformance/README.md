@@ -38,7 +38,7 @@ that started passing. A baseline therefore changes only through
 `.github/workflows/conformance.yml` runs the three server lanes and the two
 client lanes on every pull request and push to main, each against its
 baseline, and keeps the runner's raw results as an artifact. `canary.yml`
-runs the three server lanes weekly against
+runs the three server lanes and the two client lanes weekly against
 the runner's `alpha` dist-tag (`PRESA_CONFORMANCE_UNPINNED=1`) without
 gating anything, to show what a newer runner would change.
 
