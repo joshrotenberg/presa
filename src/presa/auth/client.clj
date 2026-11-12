@@ -399,6 +399,47 @@
              (swap! state assoc ::refused e))
            (throw e)))))
 
+(defn- token-from
+  "The stored token from a token response doc."
+  [doc scopes issuer client-id resource-metadata]
+  {:access-token (get doc "access_token")
+   :refresh-token (get doc "refresh_token")
+   :scopes (if-let [s (get doc "scope")] (vec (str/split s #"\s+")) (vec scopes))
+   :expires-at (when (number? (get doc "expires_in"))
+                 (+ (System/currentTimeMillis) (* 1000 (long (get doc "expires_in")))))
+   :issuer issuer
+   :dpop? (= "dpop" (str/lower-case (str (get doc "token_type"))))
+   :client-id client-id
+   :resource-metadata resource-metadata})
+
+(defn- fresh?
+  "Whether a stored token can still be sent: it has not expired, with 30 s
+  to spare."
+  [{:keys [access-token expires-at]}]
+  (boolean (and access-token (or (nil? expires-at) (< (System/currentTimeMillis) (- expires-at 30000))))))
+
+(defn- refresh-grant!
+  "Get a new access token with the stored refresh token (RFC 6749 section
+  6), with the client authentication and resource of the flow that got it.
+  The new access token, or nil when there is no refresh token or the grant
+  fails; a failed refresh token is dropped."
+  [state opts]
+  (let [{:keys [token grant]} @state
+        {:keys [as identity resource scopes]} grant]
+    (when (and (:refresh-token token) as)
+      (try
+        (let [doc (token-request! opts as identity {"grant_type" "refresh_token"
+                                                    "refresh_token" (:refresh-token token)
+                                                    "resource" resource})
+              new (token-from doc scopes (:issuer token) (:client-id token) (:resource-metadata token))
+              ;; the server may keep the refresh token it issued
+              new (update new :refresh-token #(or % (:refresh-token token)))]
+          (swap! state assoc :token new)
+          (:access-token new))
+        (catch Exception _
+          (swap! state update :token dissoc :refresh-token)
+          nil)))))
+
 (defn- obtain*
   [state opts challenge step-up]
   (let [server-url (:resource opts)
@@ -436,16 +477,9 @@
                                                        (seq scopes) (assoc "scope" (str/join " " scopes))))])
 
                          (authorize! state opts as prm issuer scopes))
-        token {:access-token (get doc "access_token")
-               :refresh-token (get doc "refresh_token")
-               :scopes (if-let [s (get doc "scope")] (vec (str/split s #"\s+")) (vec scopes))
-               :expires-at (when (number? (get doc "expires_in"))
-                             (+ (System/currentTimeMillis) (* 1000 (long (get doc "expires_in")))))
-               :issuer issuer
-               :dpop? (= "dpop" (str/lower-case (str (get doc "token_type"))))
-               :client-id (:client-id identity)
-               :resource-metadata (::url prm)}]
-    (swap! state assoc :token token)
+        token (token-from doc scopes issuer (:client-id identity) (::url prm))]
+    ;; what a later refresh grant needs
+    (swap! state assoc :token token :grant {:as as :identity identity :resource resource :scopes scopes})
     (:access-token token)))
 
 (defn provider
@@ -519,10 +553,17 @@
                   (when token {"authorization" (str "Bearer " token)})))
      :nonce! (fn [url nonce] (when (string? nonce) (swap! nonces assoc (origin-of url) nonce)))
      :token (fn [_]
-              (let [{:keys [access-token expires-at]} (:token @state)]
+              (let [current (:token @state)]
                 (cond
-                  (and access-token (or (nil? expires-at) (< (System/currentTimeMillis) (- expires-at 30000))))
-                  access-token
+                  (fresh? current)
+                  (:access-token current)
+
+                  ;; expired, with a refresh token: renew without the browser
+                  (:refresh-token current)
+                  (locking lock
+                    (if (fresh? (:token @state))
+                      (get-in @state [:token :access-token])
+                      (refresh-grant! state opts)))
 
                   ;; a client without a user can get a token up front
                   (#{:client-credentials :jwt-bearer} (:grant opts))
@@ -532,7 +573,7 @@
      :refresh (fn [{:keys [challenge status token]}]
                 (locking lock
                   (let [current (get-in @state [:token :access-token])]
-                    (if (and current (not= current token))
+                    (if (and current (not= current token) (fresh? (:token @state)))
                       ;; another request already got a new token
                       current
                       (if (= 403 status)
@@ -544,7 +585,9 @@
                             (empty? new) (fail :step-up "The server asks for scopes the token already has"
                                                {:scopes (vec asked)})
                             :else (obtain! state opts challenge new)))
-                        (obtain! state opts challenge nil))))))}))
+                        ;; a 401: the refresh grant first, then the full flow
+                        (or (refresh-grant! state opts)
+                            (obtain! state opts challenge nil)))))))}))
 
 (defn id-jag
   "An :assertion function for enterprise-managed authorization (SEP-990):
