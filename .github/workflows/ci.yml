@@ -32,6 +32,18 @@ jobs:
           bb: ${{ matrix.bb }}
       - run: bb test
 
+  macos:
+    # the stdio transport, subprocesses and signals on a second OS
+    name: bb test (macOS)
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: DeLaGuardo/setup-clojure@6d46099eae24853c33c0482f2bb54edf4f1a4c74 # 13.7.0
+        with:
+          bb: latest
+      - run: bb test
+
   jvm:
     name: bb jvm-test (JDK ${{ matrix.java }})
     runs-on: ubuntu-24.04
@@ -60,8 +72,10 @@ jobs:
           restore-keys: clojure-${{ runner.os }}-
       # the stdio client tests start servers under bb, so bb is installed too
       - run: bb jvm-test
-      # the jar a release deploys to Clojars (build.clj)
+      # the jar a release deploys to Clojars (build.clj), loaded under bb and
+      # on the JVM with only what its pom names
       - run: clojure -T:build jar
+      - run: bb smoke
 
   lint:
     name: Conventions

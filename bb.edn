@@ -7,6 +7,8 @@
             :task (shell "clojure -M:test")}
   lint {:doc "Check the repository conventions: clj-kondo, cljfmt, no em dashes, conventional commits and no attribution lines since origin/main."
         :task (apply shell "bb dev/lint.clj" *command-line-args*)}
+  smoke {:doc "Require each namespace of the built jar (clojure -T:build jar) under bb and on the JVM."
+         :task (shell "bb dev/smoke.clj")}
   fmt {:doc "Format the Clojure sources with cljfmt (.cljfmt.edn), as bb lint checks them."
        :task (shell "bb dev/fmt.clj fix")}
   conformance {:doc "Run the official conformance runner: the server leg against the fixture (bb conformance <revision>), or the client leg against the harness (bb conformance client <revision>)."
