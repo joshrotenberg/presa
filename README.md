@@ -81,6 +81,7 @@ not pull in; pass `presa.schema.networknt/validator` as the server's
 | `presa.bb` | parts from a bb.edn: tasks marked `:mcp/tool` as tools, files as resources, what a project directory offers |
 | `presa.tasks` | the Tasks extension's task store and wire shapes |
 | `presa.skill` | the Skills extension: Agent Skills built from files, a directory or the classpath, their entries with digests, and the checks a host makes |
+| `presa.nrepl` | an nREPL server as a part: tools that evaluate code in a running Clojure or Babashka REPL, load files and look symbols up, with guides served as skills |
 | `presa.auth`, `presa.auth.jwt` | OAuth 2.1 resource server: metadata, bearer challenges, JWT verification (RS256, ES256, HS256, JWKS) |
 | `presa.auth.client` | OAuth 2.1 client: discovery, registration, PKCE code flow, client credentials, JWT-bearer (workload identity) and enterprise-managed (`id-jag`) grants, DPoP, step-up |
 | `presa.auth.dpop` | DPoP (RFC 9449): ES256 key pairs and proof JWTs for the OAuth client |
@@ -118,6 +119,7 @@ not pull in; pass `presa.schema.networknt/validator` as the server's
 | [Subscriptions](docs/guides/subscriptions.md) | `subscriptions/listen`, list changes, resource updates |
 | [Tasks](docs/guides/tasks.md) | the Tasks extension: long-running tools, server and client |
 | [Skills](docs/guides/skills.md) | the Skills extension: serving Agent Skills, listing and loading them from a client |
+| [The nREPL bridge](docs/guides/nrepl.md) | a running REPL behind MCP tools: running it, how an evaluation behaves, its skills, security |
 | [Authorization](docs/guides/authorization.md) | the OAuth 2.1 resource server and client, JWT verification, scopes |
 | [Parts](docs/guides/parts.md) | servers composed from parts: combining, precedence, proxying, serving, calling in process, parts from a bb.edn |
 | [The proxy](docs/guides/proxy.md) | one server in front of several, what it forwards, input from initialize-era backends |
