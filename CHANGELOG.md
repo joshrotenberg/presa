@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/joshrotenberg/presa/compare/v0.1.7...v0.1.8) (2026-11-13)
+
+
+### Features
+
+* serve Agent Skills with the Skills extension (SEP-2640) ([#155](https://github.com/joshrotenberg/presa/issues/155)) ([084ef5f](https://github.com/joshrotenberg/presa/commit/084ef5f04ca9013d82957bbdbb3797f3e1d4f048))
+
 ## [0.1.7](https://github.com/joshrotenberg/presa/compare/v0.1.6...v0.1.7) (2026-11-13)
 
 
