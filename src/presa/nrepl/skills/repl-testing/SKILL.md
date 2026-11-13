@@ -26,6 +26,9 @@ the test file:
 Failures are printed, so they are in the result. The returned map is the
 summary: check `:fail` and `:error`.
 
+Tests that live in the source namespace run the same way: load the file and
+pass that namespace to `run-tests`.
+
 ## One test
 
 ```clojure

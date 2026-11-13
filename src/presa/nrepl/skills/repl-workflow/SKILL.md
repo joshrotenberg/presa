@@ -8,10 +8,25 @@ description: How to develop against a live REPL with eval, load_file and lookup.
 The REPL is the running program. Evaluate to find out what is true instead of
 guessing from the source: call the function, look at the value.
 
+## Which runtime
+
+The REPL may be JVM Clojure, Babashka or another dialect, and they differ in
+what is available. Find out once:
+
+```clojure
+{:babashka (System/getProperty "babashka.version")   ; nil on the JVM
+ :clojure (clojure-version)
+ :dir (System/getProperty "user.dir")}               ; the REPL's working directory
+```
+
+Relative paths in evaluated code resolve against the REPL's working
+directory, which may not be yours. Absolute paths avoid the question.
+
 ## The loop
 
 1. Read or edit a source file with your file tools. Without file tools,
-   `(spit path text)` writes one from the REPL.
+   `(spit path text)` writes one from the REPL: the whole file each time,
+   with every `"` in the source escaped.
 2. `load_file` it, so the running program has the new definitions.
 3. `eval` a call with real arguments and read the result.
 4. Repeat. Keep each evaluation small: one require, one call, one value.

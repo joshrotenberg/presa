@@ -124,7 +124,8 @@
     (cond-> acc
       (contains? m "out") (update :out append (get m "out") half)
       (contains? m "err") (update :err append (get m "err") half)
-      (contains? m "value") (update :values conj (clip (get m "value") max-output-chars))
+      (contains? m "value") (-> (update :values conj (clip (get m "value") max-output-chars))
+                                (update :value-count (fnil inc 0)))
       (contains? m "ns") (assoc :ns (get m "ns"))
       (contains? m "ex") (assoc :ex (get m "ex"))
       (nrepl/status? m "interrupted") (assoc :interrupted? true)
@@ -163,7 +164,7 @@
               :started (System/currentTimeMillis)
               :phase (atom :running)
               :watched? (atom true)
-              :acc (atom (cond-> (merge empty-acc (select-keys (meta message) [:loaded]))
+              :acc (atom (cond-> (merge empty-acc (select-keys (meta message) [:loaded :forms]))
                            (and fresh? @used?)
                            (assoc :note "This is a new REPL session: earlier *ns*, *1 and *e are gone, and if the REPL restarted, so are its definitions.")))}]
     (reset! used? true)
@@ -203,8 +204,18 @@
 
 (defn- finish!
   "The result of a slot that is done, which stops being the current one."
-  [{:keys [opts current]} {:keys [phase acc] :as slot}]
+  [{:keys [opts current last-ns]} {:keys [phase acc] :as slot}]
   (compare-and-set! current slot nil)
+  (when-let [n (:ns @acc)] (reset! last-ns n))
+  ;; a REPL that reads one form per message (ClojureScript through
+  ;; piggieback) drops the rest without a word
+  (let [{:keys [forms value-count ex interrupted?]} @acc
+        evaluated (or value-count 0)]
+    (when (and forms (= :done @phase) (not ex) (not interrupted?) (< evaluated (long forms)))
+      (swap! acc update :note
+             #(str (when % (str % " "))
+                   "Only " evaluated " of the " forms " forms sent were evaluated: this REPL takes one form per"
+                   " call. Send one form at a time, or wrap them in (do ...)."))))
   (when (= :disconnected @phase)
     (swap! acc assoc :note "The nREPL connection closed before the evaluation finished."))
   (result opts (final-status slot) @acc))
@@ -213,21 +224,26 @@
 
 (defn- stop!
   "Interrupt the slot's evaluation and wait :interrupt-grace-ms for it to
-  finish; one that does not gives up its session. Returns the result."
-  [{:keys [opts current] :as bridge} {:keys [conn session sent acc] :as slot} note]
-  (try (nrepl/request conn {"op" "interrupt" "session" session "interrupt-id" (:id sent)} 2000)
-       (catch Exception _ nil))
-  (let [deadline (+ (System/currentTimeMillis) (long (:interrupt-grace-ms opts)))]
-    (while (and (not (over? slot)) (< (System/currentTimeMillis) deadline))
-      (Thread/sleep 25))
+  finish; one that does not gives up its session, and so does one on a
+  server that has no interrupt op. Returns the result."
+  [{:keys [opts current state] :as bridge} {:keys [conn session sent acc] :as slot} note]
+  (let [can? (contains? (:ops @state) "interrupt")]
+    (when can?
+      (try (nrepl/request conn {"op" "interrupt" "session" session "interrupt-id" (:id sent)} 2000)
+           (catch Exception _ nil))
+      (let [deadline (+ (System/currentTimeMillis) (long (:interrupt-grace-ms opts)))]
+        (while (and (not (over? slot)) (< (System/currentTimeMillis) deadline))
+          (Thread/sleep 25))))
     (when-not (over? slot) (drop-session! bridge session))
     (compare-and-set! current slot nil)
     (result opts "interrupted"
             (assoc @acc :note
-                   (if (over? slot)
-                     note
-                     (str note " The evaluation did not stop when interrupted, so it may still be running;"
-                          " later calls use a new session with fresh *ns*, *1 and *e."))))))
+                   (cond
+                     (over? slot) note
+                     can? (str note " The evaluation did not stop when interrupted, so it may still be running;"
+                               " later calls use a new session with fresh *ns*, *1 and *e.")
+                     :else (str note " This nREPL server cannot interrupt an evaluation, so it was left running;"
+                                " later calls use a new session with fresh *ns*, *1 and *e."))))))
 
 (def ^:private stdin-request
   (input/elicit "The code being evaluated is reading a line from standard input."
@@ -358,6 +374,20 @@
    "description" (str "Milliseconds to wait for the result. Code still running then keeps running: "
                       "the call returns what it has, and await or interrupt follow up.")})
 
+(defn- form-count
+  "How many top-level forms code holds, or nil when it cannot be told: code
+  this runtime's reader does not read, or with reader conditionals, whose
+  forms depend on the REPL's platform."
+  [code]
+  (when-not (str/includes? code "#?")
+    (try
+      (binding [*read-eval* false
+                *default-data-reader-fn* (fn [_ v] v)]
+        (with-open [r (java.io.PushbackReader. (java.io.StringReader. code))]
+          (loop [n 0]
+            (if (identical? r (read {:eof r} r)) n (recur (inc n))))))
+      (catch Throwable _ nil))))
+
 (defn- eval-tool [bridge]
   {:name "eval"
    :title "Evaluate code"
@@ -374,7 +404,10 @@
    :annotations {"destructiveHint" true "openWorldHint" true}
    :handler (reporting
              (fn [{:strs [code ns timeout_ms]} ctx]
-               (evaluate bridge (cond-> {"op" "eval" "code" code} ns (assoc "ns" ns)) ctx timeout_ms)))})
+               (evaluate bridge
+                         (with-meta (cond-> {"op" "eval" "code" code} ns (assoc "ns" ns))
+                           {:forms (form-count code)})
+                         ctx timeout_ms)))})
 
 (defn- load-file-tool [{:keys [opts] :as bridge}]
   {:name "load_file"
@@ -383,7 +416,7 @@
                      "evaluated with the file's name and line numbers, so definitions point at their source. "
                      "Use it after editing a file.")
    :input-schema {"type" "object"
-                  "properties" {"path" {"type" "string" "description" "The file, absolute or relative to the project directory."}
+                  "properties" {"path" {"type" "string" "description" "The file: an absolute path, or one relative to the directory this server was started for, which may not be the REPL's working directory."}
                                 "timeout_ms" timeout-property}
                   "required" ["path"]}
    :annotations {"destructiveHint" true "openWorldHint" true}
@@ -440,7 +473,7 @@
    :description "The documentation, argument lists and source location of a var or special form, as the REPL sees it."
    :input-schema {"type" "object"
                   "properties" {"sym" {"type" "string" "description" "A symbol, qualified or not, such as clojure.string/join."}
-                                "ns" {"type" "string" "description" "The namespace to resolve it in. Defaults to user."}}
+                                "ns" {"type" "string" "description" "The namespace to resolve it in. Defaults to the session's current namespace."}}
                   "required" ["sym"]}
    :annotations {"readOnlyHint" true}
    :handler (reporting
@@ -448,8 +481,9 @@
                (let [{:keys [conn session ops]} (ensure! bridge)
                      op (cond (ops "lookup") "lookup" (ops "info") "info")
                      answer (when op
-                              (nrepl/request conn (cond-> {"op" op "session" session "sym" sym}
-                                                    ns (assoc "ns" ns))))
+                              ;; nbb answers only a request that names a namespace
+                              (nrepl/request conn {"op" op "session" session "sym" sym
+                                                   "ns" (or ns @(:last-ns bridge))}))
                      ;; lookup nests under "info"; cider's info op answers flat
                      ;; and bencode has no empty map: an empty one arrives as an empty list
                      info (cond (map? (get answer "info")) (get answer "info")
@@ -457,7 +491,8 @@
                                 :else (dissoc answer "id" "session" "status"))]
                  (cond
                    (nil? op) (server/tool-error "This nREPL server has no lookup op.")
-                   (or (empty? info) (nrepl/status? answer "no-info")) (server/tool-error (str "Nothing known about " sym))
+                   (or (nrepl/status? answer "no-info") (not (or (get info "name") (get info "doc"))))
+                   (server/tool-error (str "Nothing known about " sym ". Its namespace may not be loaded yet."))
                    :else
                    (let [{:strs [name doc file line] arglists "arglists-str" in "ns"} info]
                      (cond-> {"content" [{"type" "text"
@@ -471,9 +506,11 @@
 (def instructions
   (str "eval runs code in a live REPL whose state persists between calls. Prefer small evaluations: "
        "require a namespace, call one function, inspect one value. After editing a source file, load it "
-       "with load_file (or require it with :reload) before relying on the change. When a call reports an "
-       "exception, evaluate *e for the message and stack trace. Code that outlasts a call's timeout keeps "
-       "running: await waits for it and interrupt stops it."))
+       "with load_file (or require it with :reload) before relying on the change. A call that throws "
+       "reports the exception's message; *e holds the exception for its data and stack trace. Code that "
+       "outlasts a call's timeout keeps running: await waits for it and interrupt stops it. The REPL may "
+       "be JVM Clojure, Babashka or another dialect: (System/getProperty \"babashka.version\") is nil "
+       "on the JVM."))
 
 ;; Skills: guides served with the Skills extension (presa.skill)
 
@@ -487,12 +524,29 @@
 
 (defn- skill-instructions [skills]
   (str "Guides for working this way are skills of this server. Read the one that fits before a task of "
-       "its kind:\n"
-       (str/join "\n" (map #(str "- " (skill/uri %) ": " (get (:frontmatter %) "description")) skills))))
+       "its kind, with the guide tool or as a resource:\n"
+       (str/join "\n" (map #(str "- " (:name %) " (" (skill/uri %) "): " (get (:frontmatter %) "description")) skills))))
+
+(defn- guide-tool
+  "The skills as a tool, for a host that gives its model no way to read
+  resources."
+  [skills]
+  {:name "guide"
+   :title "Read a guide"
+   :description (str "Read one of this server's guides to working in the REPL. The same text is served as a "
+                     "skill at skill://<name>/SKILL.md.\n"
+                     (str/join "\n" (map #(str "- " (:name %) ": " (get (:frontmatter %) "description")) skills)))
+   :input-schema {"type" "object"
+                  "properties" {"name" {"type" "string" "enum" (mapv :name skills)}}
+                  "required" ["name"]}
+   :annotations {"readOnlyHint" true}
+   :handler (fn [{:strs [name]} _]
+              (or (some #(when (= name (:name %)) (get (:files %) "SKILL.md")) skills)
+                  (server/tool-error (str "No guide " name))))})
 
 (defn part
   "A part (see presa.part) of tools over one nREPL server: eval, load_file,
-  await, interrupt and lookup. It connects on the first call and again
+  await, interrupt, lookup and guide. It connects on the first call and again
   whenever the connection is gone, cloning one session that the calls
   share. Options:
 
@@ -515,7 +569,8 @@
   - :max-output-lines  the most lines kept of stdout and of stderr, half
            from the start and half from the end (default 100)
   - :skills?  false to leave out the guides: the skills (see `skill-names`,
-           served as skill://<name>/SKILL.md) and the lines of the
+           served as skill://<name>/SKILL.md), the guide tool that reads
+           them for a host without resources, and the lines of the
            instructions that list them
 
   :close! interrupts a running evaluation and closes the session and the
@@ -527,10 +582,13 @@
                  :current (atom nil)
                  :finished (atom nil)
                  :used? (atom false)
+                 ;; the session's namespace as the last evaluation left it
+                 :last-ns (atom "user")
                  :lock (Object.)}
          skills (when (:skills? opts true) (skills))]
-     {:tools [(eval-tool bridge) (load-file-tool bridge) (await-tool bridge) (interrupt-tool bridge)
-              (lookup-tool bridge)]
+     {:tools (cond-> [(eval-tool bridge) (load-file-tool bridge) (await-tool bridge) (interrupt-tool bridge)
+                      (lookup-tool bridge)]
+               skills (conj (guide-tool skills)))
       :skills (vec skills)
       :instructions (cond-> instructions skills (str "\n\n" (skill-instructions skills)))
       :close! (fn []

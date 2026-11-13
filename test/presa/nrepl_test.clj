@@ -240,8 +240,26 @@
         (is (client/skills? c))
         (is (= (map #(str "skill://" % "/SKILL.md") nrepl/skill-names) (map #(get % "uri") (client/list-skills c))))
         (is (str/includes? (:text (client/read-skill c "skill://repl-workflow/SKILL.md")) "# Working in a live REPL")))))
+  (testing "the guide tool reads one, for a host without resources"
+    (part/with-client {:parts [(nrepl/part {:port 1})]}
+      (fn [c]
+        (is (str/includes? (client/text (client/call-tool c "guide" {"name" "repl-long-running"})) "# Long-running code"))
+        (is (true? (get (client/call-tool c "guide" {"name" "nope"}) "isError"))))))
   (testing "they can be left out"
     (let [p (nrepl/part {:port 1 :skills? false})]
       (is (empty? (:skills p)))
+      (is (not (some #{"guide"} (map :name (:tools p)))))
       (is (not (str/includes? (:instructions p) "skill://")))
       (part/with-client {:parts [p]} (fn [c] (is (not (client/skills? c))))))))
+
+(deftest counting-forms
+  (let [form-count #'nrepl/form-count]
+    (is (= 3 (form-count "(println :hi) (def x 41) ; a comment\n(inc x)")))
+    (is (= 1 (form-count "(do 1 2 3)")))
+    (is (= 0 (form-count "  ; nothing\n")))
+    (is (= 2 (form-count "#js {:a 1} #inst \"2026-01-01\"")))
+    (testing "what cannot be counted is not guessed"
+      (is (nil? (form-count "(unbalanced")))
+      (is (nil? (form-count "#?(:cljs 1) 2"))))
+    (testing "reading runs nothing"
+      (is (nil? (form-count "#=(System/exit 1)"))))))

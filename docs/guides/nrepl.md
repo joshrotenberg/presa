@@ -61,13 +61,14 @@ a tool error that says so.
 | `await` | waits for an evaluation that an earlier call left running |
 | `interrupt` | stops the running evaluation |
 | `lookup` | the doc string, argument lists and source location of a symbol |
+| `guide` | reads one of the part's guides (see Skills below) |
 
 ```clojure
 (require '[presa.nrepl :as nrepl])
 
 ;; a part connects on its first call, so building one needs no REPL
 (map :name (:tools (nrepl/part {:port 7888})))
-;; => ("eval" "load_file" "await" "interrupt" "lookup")
+;; => ("eval" "load_file" "await" "interrupt" "lookup" "guide")
 ```
 
 A result is text written for a model:
@@ -136,8 +137,10 @@ them in its instructions, so a model reads the one that fits its task:
 ;; => []
 ```
 
-Each is at `skill://<name>/SKILL.md`. `:skills? false` leaves them out,
-along with the lines of the instructions that list them.
+Each is at `skill://<name>/SKILL.md`. Claude Code reads them as resources.
+Codex gives its model no way to read a resource, so the `guide` tool returns
+the same text by name. `:skills? false` leaves out the skills, the tool and
+the lines of the instructions that list them.
 
 ## As a part
 
@@ -174,12 +177,29 @@ the text. `:structured? true` adds a map of `status`, `values`, `out`,
 The part's `:close!` interrupts a running evaluation and closes the session
 and the connection.
 
+## REPLs and hosts
+
+What the bridge has been run against:
+
+| REPL | Result |
+|---|---|
+| JVM nREPL 1.3.1 | everything works |
+| JVM nREPL with cider-nrepl middleware | everything works |
+| Babashka (`bb nrepl-server`) | everything works |
+| nbb (`nbb nrepl-server`) | works, with no interrupt and no `read-line`. A promise is awaited and its value printed as `#<Promise v>`. An evaluation that is abandoned gives up its session |
+| ClojureScript through piggieback on Node | single forms work. It evaluates only the first form of a call, which the result says; wrap several in `(do ...)`. Printed output is not returned, promises are not awaited, and `lookup` finds nothing without cider-nrepl |
+
+shadow-cljs, Basilisp and Scittle are untried.
+
+| Host | Result |
+|---|---|
+| Claude Code | tools; a line of input through elicitation in an interactive session, declined when run headless; skills read as resources |
+| Codex | tools; guides through the `guide` tool |
+
 ## Limits
 
 - One session per part. Two agents on one bridge share `*ns*`, `*1` and
   `*e`.
 - `lookup` knows only namespaces that are loaded.
-- It is tested against JVM nREPL and Babashka's nREPL server. ClojureScript
-  REPLs and other nREPL servers are untried.
 - There is no delimiter repair and no file editing: a host's own file tools
   do that.
