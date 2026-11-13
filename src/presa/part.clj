@@ -4,10 +4,10 @@
   A part is plain data, every key optional:
 
     {:tools [...] :resources [...] :resource-templates [...] :prompts [...]
-     :instructions \"...\" :close! (fn [])}
+     :skills [...] :instructions \"...\" :close! (fn [])}
 
-  tools, resources, resource templates and prompts as presa.server/server
-  takes them. A library hands back a part; a caller combines parts into one
+  tools, resources, resource templates, prompts and skills as
+  presa.server/server takes them. A library hands back a part; a caller combines parts into one
   server. :close! lets a part with live state (subprocesses, open files)
   settle when the server stops.
 
@@ -21,6 +21,7 @@
             [presa.protocol :as protocol]
             [presa.proxy :as px]
             [presa.server :as server]
+            [presa.skill :as skill]
             [presa.transport.stdio :as stdio]))
 
 (defn- duplicates* [xs] (keep (fn [[x n]] (when (> n 1) x)) (frequencies xs)))
@@ -52,7 +53,8 @@
          p {:tools (pick :tools :name "tool")
             :resources (pick :resources :uri "resource")
             :resource-templates (pick :resource-templates :uri-template "resource template")
-            :prompts (pick :prompts :name "prompt")}]
+            :prompts (pick :prompts :name "prompt")
+            :skills (pick :skills skill/uri "skill")}]
      (assoc p
             :dropped @dropped
             :instructions (some->> (keep :instructions parts) seq (str/join "\n\n"))
@@ -80,14 +82,16 @@
   :prompts in opts join the parts as one more, last part; explicit
   :instructions replace the parts'. :duplicates is combine's option."
   [{:keys [parts duplicates] :as opts}]
-  (let [own (select-keys opts [:tools :resources :resource-templates :prompts])
+  (let [own (select-keys opts [:tools :resources :resource-templates :prompts :skills])
         p (combine (cond-> (vec parts) (seq own) (conj own)) {:duplicates (or duplicates :throw)})]
     [(server/server (merge {:name (.getName (.getCanonicalFile (io/file ".")))
                             :version "0"
                             :versions protocol/versions}
                            (select-keys p [:tools :resources :resource-templates :prompts])
+                           ;; only a server with skills declares the Skills extension
+                           (when (seq (:skills p)) {:skills (:skills p)})
                            (when (:instructions p) {:instructions (:instructions p)})
-                           (dissoc opts :parts :duplicates :tools :resources :resource-templates :prompts)))
+                           (dissoc opts :parts :duplicates :tools :resources :resource-templates :prompts :skills)))
      p]))
 
 (defn serve!

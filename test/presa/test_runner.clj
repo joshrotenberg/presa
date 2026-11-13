@@ -26,6 +26,7 @@
             [presa.scopes-test]
             [presa.server-surface-test]
             [presa.server-test]
+            [presa.skill-test]
             [presa.subscriptions-test]
             [presa.tasks-test]
             [presa.transport.http-test]
@@ -56,6 +57,7 @@
     presa.scopes-test
     presa.tasks-test
     presa.proxy-test
+    presa.skill-test
     presa.example.hello-test
     presa.example.notebook-test
     presa.example.clojars-test

@@ -3,6 +3,7 @@
   the catalog snapshot a request reads, capabilities."
   (:require [clojure.string :as str]
             [presa.protocol :as protocol]
+            [presa.skill :as skill]
             [presa.tasks :as tasks]
             [presa.uri-template :as uri-template]))
 
@@ -99,7 +100,8 @@
   (cond-> {}
     (or (seq (:tools srv)) (:list-changed srv))
     (assoc "tools" (if (:list-changed srv) {"listChanged" true} {}))
-    (or (seq (:resources srv)) (seq (:templates srv)) (:list-changed srv))
+    ;; a server with the Skills extension declares resources as well
+    (or (seq (:resources srv)) (seq (:templates srv)) (:list-changed srv) (:skills srv))
     (assoc "resources" (cond-> {}
                          (:list-changed srv) (assoc "listChanged" true)
                          (:subscribe srv) (assoc "subscribe" true)))
@@ -107,7 +109,8 @@
     (assoc "prompts" (if (:list-changed srv) {"listChanged" true} {}))
     (completions? srv) (assoc "completions" {})
     (:logging srv) (assoc "logging" {})
-    (:task-store srv) (assoc "extensions" {tasks/extension {}})))
+    (:task-store srv) (assoc-in ["extensions" tasks/extension] {})
+    (:skills srv) (assoc-in ["extensions" skill/extension] {"directoryRead" true})))
 
 (defn put-ordered [c m-key order-key k v]
   (cond-> (assoc-in c [m-key k] v)
