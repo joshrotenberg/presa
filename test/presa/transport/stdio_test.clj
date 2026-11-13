@@ -176,3 +176,12 @@
                               :else (do (Thread/sleep 50) (recur (inc n)))))
             "the server and its child are gone"))
       (finally (.delete pids)))))
+
+(deftest internal-errors-go-to-the-log
+  (let [srv (server/server {:name "t" :version "1"
+                            :resources [{:uri "x:/db" :name "db"
+                                         :handler (fn [_] (throw (ex-info "SELECT * FROM secrets failed" {})))}]})
+        {:keys [responses log]} (run srv [(line (rpc/request 1 "resources/read" {"uri" "x:/db" "_meta" meta-2026}))])]
+    (is (= "Internal error" (get-in (first responses) ["error" "message"])) "the client gets no details")
+    (is (some #(and (str/includes? % "resources/read") (str/includes? % "SELECT * FROM secrets failed")) log)
+        "the log has them, with the stack trace")))

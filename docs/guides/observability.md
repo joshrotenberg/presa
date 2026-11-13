@@ -60,6 +60,9 @@ are ignored.
 The client gets `-32603 "Internal error"` for an unexpected exception,
 without its message, which can carry file paths, queries or other internals;
 `:expose-errors? true` on the server adds the message, for development.
+The exception and its stack trace go to the transport's `:log`, which is a
+line on stderr by default for stdio and Streamable HTTP; a stdio server's
+stderr usually lands in the host's MCP server log.
 
 ```clojure
 (filter #(= "tools/call" (:method %)) @events)

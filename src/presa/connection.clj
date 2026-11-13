@@ -62,6 +62,7 @@
                    (let [related (when (= :request (rpc/kind message)) (get message "id"))
                          prepared (server/prepare srv @session message
                                                   {:notify #(send (tag related %))
+                                                   :log log
                                                    :session-notify send
                                                    :request (partial request related)})]
                      (reset! session (:session prepared))
