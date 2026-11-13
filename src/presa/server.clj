@@ -295,7 +295,7 @@
   :cancelled?, and for a resource template, :uri; see `notify!`,
   `progress!` and `log!`."
   ([srv session message] (prepare srv session message {}))
-  ([srv session message {:keys [notify session-notify auth] send-request :request}]
+  ([srv session message {:keys [notify session-notify auth log] send-request :request}]
    (case (rpc/kind message)
      :request
      (let [id (get message "id")
@@ -314,6 +314,12 @@
                   (if (:presa/error (ex-data e))
                     (error-response id e)
                     (do (emit! srv {:event :request/error :method (get message "method") :request-id id :exception e})
+                        ;; the details the client is not sent go to the transport's log
+                        (when log
+                          (log "internal error in " (get message "method") " (request " (pr-str id) "): "
+                               (let [sw (java.io.StringWriter.)]
+                                 (.printStackTrace ^Throwable e (java.io.PrintWriter. sw))
+                                 (str sw))))
                         ;; the exception's text stays on the server unless asked for
                         (rpc/error id :internal-error (if (:expose-errors? srv)
                                                         (str "Internal error: " (ex-message e))

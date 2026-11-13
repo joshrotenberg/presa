@@ -23,6 +23,11 @@
            (contains? loopback-hosts (.getHost u))))
     (catch Exception _ false)))
 
+(defn- stderr-log [& parts]
+  (binding [*out* *err*]
+    (println (apply str "presa: " parts))
+    (flush)))
+
 (defn- loopback-host?
   "Whether a Host header value names a loopback host, with or without a port."
   [host]
@@ -215,6 +220,7 @@
                                      r)
                                    (finally (swap! outgoing dissoc id))))))
             opts {:notify emit!
+                  :log log
                   :auth identity
                   :request client-request
                   :session-notify (when session (session-notify session))}
@@ -378,12 +384,14 @@
   - :max-sessions-per-subject  with :auth, at this many initialize-era
                       sessions of one subject, that subject's initialize gets
                       503 (default 100)
-  - :log              (fn [& parts]) for diagnostics"
+  - :log              (fn [& parts]) for diagnostics, such as an unexpected
+                      exception the client gets only as \"Internal error\"
+                      (default: a line on stderr)"
   ([srv] (handler srv {}))
   ([srv {:keys [path allowed-origins allowed-hosts log keepalive-ms max-body-bytes cancellation
                 session-idle-ms max-sessions max-sessions-per-subject]
          auth-config :auth
-         :or {path "/mcp" log (fn [& _]) keepalive-ms 15000 max-body-bytes default-max-body-bytes
+         :or {path "/mcp" log stderr-log keepalive-ms 15000 max-body-bytes default-max-body-bytes
               session-idle-ms default-session-idle-ms max-sessions default-max-sessions
               max-sessions-per-subject default-max-sessions-per-subject}}]
    (let [sessions (atom {})
