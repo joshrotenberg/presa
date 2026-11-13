@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/joshrotenberg/presa/compare/v0.1.6...v0.1.7) (2026-11-13)
+
+
+### Features
+
+* log internal errors with their stack trace to the transport's log ([#153](https://github.com/joshrotenberg/presa/issues/153)) ([3b5c3cf](https://github.com/joshrotenberg/presa/commit/3b5c3cf5205b41d900155c8743fe80ec29f9d318))
+
 ## [0.1.6](https://github.com/joshrotenberg/presa/compare/v0.1.5...v0.1.6) (2026-11-12)
 
 
