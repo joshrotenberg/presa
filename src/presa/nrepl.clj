@@ -150,7 +150,7 @@
                                                  (reset! phase :done))
                              (nrepl/status? m "need-input") (do (reset! phase :need-input) (recur))
                              :else (recur)))))))
-         "presa-nrepl-eval")
+                 "presa-nrepl-eval")
     (.setDaemon true)
     (.start)))
 
@@ -461,12 +461,12 @@
                    :else
                    (let [{:strs [name doc file line] arglists "arglists-str" in "ns"} info]
                      (cond-> {"content" [{"type" "text"
-                                  "text" (str/join "\n" (remove nil? [(str (when (seq in) (str in "/")) name)
-                                                                      (when (seq arglists) arglists)
-                                                                      (when (seq doc) doc)
-                                                                      (when (seq file) (str file (when line (str ":" line))))]))}]
-                             "isError" false}
-                      (:structured? (:opts bridge)) (assoc "structuredContent" info)))))))})
+                                          "text" (str/join "\n" (remove nil? [(str (when (seq in) (str in "/")) name)
+                                                                              (when (seq arglists) arglists)
+                                                                              (when (seq doc) doc)
+                                                                              (when (seq file) (str file (when line (str ":" line))))]))}]
+                              "isError" false}
+                       (:structured? (:opts bridge)) (assoc "structuredContent" info)))))))})
 
 (def instructions
   (str "eval runs code in a live REPL whose state persists between calls. Prefer small evaluations: "
