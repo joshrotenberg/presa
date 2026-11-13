@@ -13,7 +13,7 @@
 
 (def cached-methods
   #{"server/discover" "tools/list" "resources/list" "resources/templates/list"
-    "resources/read" "prompts/list"})
+    "resources/read" "prompts/list" "skills/list"})
 
 (def input-methods
   "The methods that may answer input_required."

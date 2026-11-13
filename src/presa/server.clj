@@ -22,7 +22,8 @@
             [presa.server.catalog :refer [drop-ordered index prompt-def put-ordered resource-def
                                           snapshot template-def tool-def]]
             [presa.server.access :refer [may-read?]]
-            [presa.server.dispatch :refer [cancel-target error-response request]]))
+            [presa.server.dispatch :refer [cancel-target error-response request]]
+            [presa.server.skills :as server-skills]))
 
 (defmacro ^:private defalias
   "Define name as the var target names, with its docstring and arglists."
@@ -166,6 +167,11 @@
       of lists, and a call to it is -32003 with data
       {\"error\" \"insufficient_scope\" \"scope\" ...}
   - :default-scopes  the scopes of a component without an entry (default [])
+  - :skills  skills to serve (see presa.skill), which turns on the Skills
+      extension (io.modelcontextprotocol/skills): each skill's files become
+      resources, skill://<path>/<file>, and the server answers skills/list,
+      skills/get and resources/directory/read. An empty vector declares the
+      extension with no skills
   - :tasks  options that turn on the Tasks extension
       (io.modelcontextprotocol/tasks): {:ttl-ms 3600000 :poll-interval-ms 250
       :max-tasks 1000 :max-finished 1000}; finished tasks past :max-finished
@@ -186,7 +192,7 @@
   [{:keys [name version title instructions tools resources resource-templates prompts
            versions page-size cache logging log-level validate? state-secret state-ttl-ms keywordize-args?
            list-changed subscribe max-subscriptions on-event required-scopes default-scopes validator
-           expose-errors?]
+           expose-errors? skills]
     tasks-opts :tasks
     :as opts
     :or {versions [protocol/latest-version] log-level "info" validate? true state-ttl-ms 300000
@@ -204,8 +210,9 @@
     (throw (ex-info (str ":log-level must be one of " protocol/log-levels) {:kind :invalid-input})))
   (when (and (:scope cache) (not (#{"private" "public"} (:scope cache))))
     (throw (ex-info ":cache :scope must be \"private\" or \"public\"" {:kind :invalid-input})))
-  (let [[tools tool-order] (index "tool" :name (map tool-def tools))
-        [resources resource-order] (index "resource" :uri (map resource-def resources))
+  (let [skill-index (when (some? skills) (server-skills/index skills))
+        [tools tool-order] (index "tool" :name (map tool-def tools))
+        [resources resource-order] (index "resource" :uri (map resource-def (concat resources (:resources skill-index))))
         templates (mapv template-def resource-templates)
         [prompts prompt-order] (index "prompt" :name (map prompt-def prompts))]
     (index "resource template" :uri-template templates)
@@ -233,6 +240,8 @@
                :on-event on-event
                :expose-errors? (boolean expose-errors?)
                :task-store (when tasks-opts (tasks/store tasks-opts))
+               ;; the Skills extension; nil when it is off
+               :skills skill-index
                :required-scopes (or required-scopes {})
                :default-scopes (vec default-scopes)
      ;; open subscriptions/listen streams, by a key of their own

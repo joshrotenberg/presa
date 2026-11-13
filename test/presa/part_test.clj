@@ -26,7 +26,7 @@
       (is (= [:a nil {:error "cannot close"}] ((:close! p))))
       (is (= [:a] @closed)))
     (testing "an empty combination"
-      (is (= {:tools [] :resources [] :resource-templates [] :prompts [] :instructions nil :dropped []}
+      (is (= {:tools [] :resources [] :resource-templates [] :prompts [] :skills [] :instructions nil :dropped []}
              (dissoc (part/combine []) :close!))))))
 
 (deftest precedence

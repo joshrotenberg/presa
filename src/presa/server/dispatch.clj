@@ -9,6 +9,7 @@
             [presa.server.catalog :refer [capabilities legacy-versions snapshot stateless-versions]]
             [presa.server.access :refer [match-template may-read? required-scopes]]
             [presa.server.shape :refer [input-methods shape]]
+            [presa.server.skills :refer [directory-read skills-get skills-list]]
             [presa.server.tasks :refer [tasks-cancel tasks-get tasks-update]]
             [presa.server.methods :refer [completion-complete initialize-result ping prompts-get prompts-list resources-list resources-read server-discover templates-list tools-call tools-list]]
             [presa.server.subscriptions :refer [max-session-subscriptions subscriptions-listen]]))
@@ -30,7 +31,11 @@
    "subscriptions/listen" {:f subscriptions-listen :capability :presa.server/subscriptions :legacy? false}
    "tasks/get" {:f tasks-get :capability :presa.server/tasks :legacy? false}
    "tasks/update" {:f tasks-update :capability :presa.server/tasks :legacy? false}
-   "tasks/cancel" {:f tasks-cancel :capability :presa.server/tasks :legacy? false}})
+   "tasks/cancel" {:f tasks-cancel :capability :presa.server/tasks :legacy? false}
+   ;; the Skills extension
+   "skills/list" {:f skills-list :capability :presa.server/skills :legacy? true}
+   "skills/get" {:f skills-get :capability :presa.server/skills :legacy? true}
+   "resources/directory/read" {:f directory-read :capability :presa.server/skills :legacy? true}})
 
 (defn method-fn [srv method legacy?]
   (let [{:keys [f capability] :as m} (get method-table method)]
@@ -40,6 +45,7 @@
                (nil? capability) true
                (= :presa.server/subscriptions capability) (or (:list-changed srv) (:subscribe srv) (:task-store srv))
                (= :presa.server/tasks capability) (some? (:task-store srv))
+               (= :presa.server/skills capability) (some? (:skills srv))
                :else (contains? (capabilities srv) capability)))
       f
       (throw (error :method-not-found (str "Method not found: " method))))))

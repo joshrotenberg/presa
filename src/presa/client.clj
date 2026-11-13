@@ -20,7 +20,8 @@
   (:require [clojure.string :as str]
             [presa.connection :as connection]
             [presa.jsonrpc :as rpc]
-            [presa.protocol :as protocol]))
+            [presa.protocol :as protocol]
+            [presa.skill :as skill]))
 
 ;; Transports
 
@@ -506,6 +507,56 @@
   \"text\" or \"blob\"."
   [client uri & [opts]]
   (get (request client "resources/read" {"uri" uri} opts) "contents"))
+
+(defn skills?
+  "Whether the server declares the Skills extension (see presa.skill)."
+  [client]
+  (map? (get-in (info client) [:server-capabilities "extensions" skill/extension])))
+
+(defn list-skills
+  "The entries of the skills the server lists (skills/list), following
+  pagination: maps with \"uri\", \"frontmatter\" and \"resources\". A
+  server may list none or only some of the skills it serves."
+  [client & [opts]]
+  (all-pages client "skills/list" "skills" {} opts))
+
+(defn get-skill
+  "The entry of the skill whose SKILL.md is at uri (skills/get), listed or
+  not."
+  [client uri & [opts]]
+  (get (request client "skills/get" {"uri" uri} opts) "skill"))
+
+(defn read-directory
+  "The direct children of the directory resource at uri
+  (resources/directory/read), following pagination: resources as
+  resources/list gives them, a subdirectory with the mimeType
+  inode/directory. For a server whose Skills extension declares
+  directoryRead."
+  [client uri & [opts]]
+  (all-pages client "resources/directory/read" "resources" {"uri" uri} opts))
+
+(defn read-skill-file
+  "The content of the file at file-uri of the skill with entry, as a string
+  or a byte array, checked against the entry's size and digest (see
+  presa.skill/verify). A file the entry does not list, or content that does
+  not match, throws ex-info with :kind :skill-verification."
+  [client entry file-uri & [opts]]
+  (let [content (first (read-resource client file-uri opts))]
+    (skill/verify entry file-uri content)
+    (if (contains? content "blob")
+      (.decode (java.util.Base64/getDecoder) ^String (get content "blob"))
+      (get content "text"))))
+
+(defn read-skill
+  "Load the skill whose SKILL.md is at uri, as a host does: get its entry,
+  read the SKILL.md, and check the content against the entry's digest and
+  the front matter against the entry's. Returns {:entry entry :text text};
+  read the skill's other files with `read-skill-file` and the entry."
+  [client uri & [opts]]
+  (let [entry (get-skill client uri opts)
+        text (read-skill-file client entry uri opts)]
+    (skill/check-frontmatter entry text)
+    {:entry entry :text text}))
 
 (defn list-prompts
   "Every prompt the server lists, following pagination."
