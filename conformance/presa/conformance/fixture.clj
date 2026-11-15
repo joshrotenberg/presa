@@ -13,6 +13,7 @@
             [presa.input :as input]
             [presa.protocol :as protocol]
             [presa.server :as server]
+            [presa.skill :as skill]
             [presa.transport.http :as http]))
 
 (def png "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4p8AAAAASUVORK5CYII=")
@@ -312,6 +313,16 @@
                   {"user_context" (input/elicit "Provide context"
                                                 {"type" "object" "properties" {"context" {"type" "string"}}})})))}])
 
+(def skills
+  "For the Skills extension scenarios (sep-2640-*): a skill with files in
+  subdirectories, and one under a path prefix."
+  [(skill/skill "git-workflow"
+                {"SKILL.md" "---\nname: git-workflow\ndescription: How this project branches, commits and opens pull requests.\n---\n\n# Git workflow\n\nSee references/branches.md.\n"
+                 "references/branches.md" "# Branches\n\nOne branch per change.\n"
+                 "scripts/check.sh" "#!/bin/sh\nexit 0\n"})
+   (skill/skill "acme/billing/refunds"
+                {"SKILL.md" "---\nname: refunds\ndescription: How to issue a refund.\n---\n\n# Refunds\n"})])
+
 (defn fixture
   "The fixture server for profile \"latest\" or \"legacy\"."
   [profile]
@@ -321,6 +332,7 @@
                   :list-changed true
                   :subscribe (= "legacy" profile)
                   :tasks (when-not (= "legacy" profile) {:ttl-ms 3600000 :poll-interval-ms 100})
+                  :skills (when-not (= "legacy" profile) skills)
                   :tools tools
                   :resources resources
                   :resource-templates resource-templates

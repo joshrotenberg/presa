@@ -107,7 +107,8 @@
                            :timeout-ms 10000})
         capabilities (:server-capabilities (log "connected" (client/info c)))
         tools (or (attempt "tools/list" #(client/list-tools c)) [])
-        calls (get (context) "toolCalls")]
+        calls (get (context) "toolCalls")
+        scenario-name (str (System/getenv "MCP_CONFORMANCE_SCENARIO"))]
     (try
       (cond
         ;; this scenario checks that a listed schema reaches the caller
@@ -123,6 +124,16 @@
         :else
         (doseq [{:strs [name inputSchema]} (when (sequential? tools) tools)]
           (attempt (str "tools/call " name) #(client/call-tool c name (or (sample inputSchema) {})))))
+      ;; the Skills extension scenarios: list the skills, which must read no
+      ;; file, and where the scenario is about verification, load each as a
+      ;; host does and read its other files only when the SKILL.md verifies
+      (when (client/skills? c)
+        (doseq [{:strs [uri resources] :as entry} (attempt "skills/list" #(client/list-skills c))
+                :when (str/includes? scenario-name "verify")]
+          ;; attempt returns what it logged, an error too
+          (when (:text (attempt (str "load skill " uri) #(client/read-skill c uri)))
+            (doseq [{file "uri"} (when (sequential? resources) resources) :when (not= file uri)]
+              (attempt (str "read skill file " file) #(client/read-skill-file c entry file))))))
       (when (contains? capabilities "resources")
         (doseq [{:strs [uri]} (attempt "resources/list" #(client/list-resources c))]
           (attempt (str "resources/read " uri) #(client/read-resource c uri))))

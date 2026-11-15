@@ -3,11 +3,17 @@
 ;; leg, where the runner's own scenario servers drive presa.conformance.client.
 ;;
 ;;   bb conformance/run.clj [client] [revision] [scenario] [--update-baseline]
+;;   bb conformance/run.clj skills [--update-baseline]
 ;;
 ;; revision is 2026-07-28 (the default), 2025-11-25 or 2025-06-18. The
 ;; first two run the runner's frozen requirement set for that revision; for
 ;; 2025-06-18, which has none, the runner's active suite runs unscored. The
 ;; initialize-era revisions serve the fixture with every revision enabled.
+;;
+;; skills is an extension lane: the runner's scenarios for the Skills
+;; extension (SEP-2640), which no revision's set includes, run at 2026-07-28
+;; and compared with conformance/baselines/skills.json: the server ones
+;; against the fixture, then the client ones against the harness.
 ;;
 ;; PRESA_CONFORMANCE_RUNNER is the runner's dist/index.js
 ;; (@modelcontextprotocol/conformance@0.2.0-alpha.12); by default it is
@@ -47,9 +53,15 @@
 (def positional (remove #(str/starts-with? % "--") *command-line-args*))
 (def revision (or (some #(re-matches #"\d{4}-\d{2}-\d{2}" %) positional) "2026-07-28"))
 (def leg (if (some #{"client"} positional) "client" "server"))
-(def scenario (first (remove #(or (re-matches #"\d{4}-\d{2}-\d{2}" %) (= "client" %)) positional)))
+(def extension-lanes
+  "Lanes of extension scenarios, which no revision's set includes."
+  {"skills" {:server ["sep-2640-skills-enumeration" "sep-2640-skills-manifest" "sep-2640-skills-directory"]
+             :client ["sep-2640-client-no-prefetch" "sep-2640-client-verify-digest"
+                      "sep-2640-client-verify-size" "sep-2640-client-verify-frontmatter"]}})
+(def extension (some #(when (extension-lanes %) %) positional))
+(def scenario (first (remove #(or (re-matches #"\d{4}-\d{2}-\d{2}" %) (= "client" %) (extension-lanes %)) positional)))
 (def frozen? (contains? #{"2026-07-28" "2025-11-25"} revision))
-(def lane (if (= "client" leg) (str "client-" revision) revision))
+(def lane (cond extension extension (= "client" leg) (str "client-" revision) :else revision))
 (def out-dir (str (fs/path root "tmp/conformance" lane
                            (str/replace (str (java.time.Instant/now)) #"[:.]" "-"))))
 (fs/create-dirs out-dir)
@@ -84,7 +96,15 @@
                 (throw (ex-info (str "The fixture did not start: " line) {})))
               (get ready "url"))]
     (println "fixture at" url "for" revision "with runner" runner-version)
-    (run-runner (concat ["server" "--url" url "--output-dir" out-dir] (selection)) {})
+    (if extension
+      ;; the runner takes one named scenario at a time
+      (do (doseq [s (:server (extension-lanes extension))]
+            (run-runner ["server" "--url" url "--output-dir" out-dir "--scenario" s "--spec-version" revision "--force"] {}))
+          (doseq [s (:client (extension-lanes extension))]
+            (run-runner ["client" "--command" "bb -cp src:conformance -m presa.conformance.client"
+                         "--output-dir" out-dir "--scenario" s "--spec-version" revision "--force"]
+                        {"PRESA_CLIENT_PROTOCOL" revision})))
+      (run-runner (concat ["server" "--url" url "--output-dir" out-dir] (selection)) {}))
     (.close ^java.io.OutputStream (:in fixture))
     (deref fixture 5000 nil)
     (p/destroy fixture)))
@@ -92,9 +112,9 @@
 (def checks
   (for [f (fs/glob out-dir "**/checks.json")
         :let [dir (str (fs/relativize out-dir (fs/parent f)))
-              name (second (re-matches (if (= "client" leg)
-                                         #"(.+)-\d{4}-\d{2}-\d{2}T.*"
-                                         #"server-(.+)-\d{4}-\d{2}-\d{2}T.*")
+              name (second (re-matches (cond extension #"(?:server-)?(.+)-\d{4}-\d{2}-\d{2}T.*"
+                                             (= "client" leg) #"(.+)-\d{4}-\d{2}-\d{2}T.*"
+                                             :else #"server-(.+)-\d{4}-\d{2}-\d{2}T.*")
                                        dir))]
         check (json/parse-string (slurp (str f)))]
     (assoc check "scenario" name)))

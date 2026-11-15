@@ -1,0 +1,69 @@
+{
+  "revision" : "2026-07-28",
+  "runner" : "0.2.0-alpha.12",
+  "checkInventory" : {
+    "sep-2640-client-no-prefetch" : {
+      "sep-2640-host-no-prefetch" : [ "SUCCESS" ]
+    },
+    "sep-2640-client-verify-digest" : {
+      "sep-2640-host-verify-digest" : [ "SUCCESS" ]
+    },
+    "sep-2640-client-verify-frontmatter" : {
+      "sep-2640-host-frontmatter-comparison" : [ "SUCCESS" ]
+    },
+    "sep-2640-client-verify-size" : {
+      "sep-2640-host-size-mismatch-failure" : [ "SUCCESS" ]
+    },
+    "sep-2640-skills-directory" : {
+      "sep-2640-capability-directory-read-flag" : [ "SUCCESS" ],
+      "sep-2640-directory-read-invalid-params" : [ "SUCCESS" ],
+      "sep-2640-directory-read-method-registered" : [ "SUCCESS" ],
+      "sep-2640-directory-read-pagination" : [ "SUCCESS" ],
+      "sep-2640-directory-read-result-resources-shape" : [ "SUCCESS" ],
+      "sep-2640-directory-read-subdir-mimetype" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "sep-2640-skills-enumeration" : {
+      "sep-2640-authority-reg-name" : [ "SUCCESS" ],
+      "sep-2640-capability-commits-to-methods" : [ "SUCCESS" ],
+      "sep-2640-capability-declaration-inline" : [ "SUCCESS" ],
+      "sep-2640-capability-empty-object" : [ "SUCCESS" ],
+      "sep-2640-capability-requires-resources" : [ "SUCCESS" ],
+      "sep-2640-entry-frontmatter-identical" : [ "SUCCESS" ],
+      "sep-2640-entry-frontmatter-required" : [ "SUCCESS" ],
+      "sep-2640-entry-resources-required" : [ "SUCCESS" ],
+      "sep-2640-entry-uri-matches-frontmatter-name" : [ "SUCCESS" ],
+      "sep-2640-entry-uri-required" : [ "SUCCESS" ],
+      "sep-2640-limit-resources-per-skill" : [ "SUCCESS" ],
+      "sep-2640-limit-total-size" : [ "SUCCESS" ],
+      "sep-2640-metadata-reserved-prefix" : [ "SUCCESS" ],
+      "sep-2640-name-naming-rules" : [ "SUCCESS" ],
+      "sep-2640-names-should-be-unique" : [ "SUCCESS" ],
+      "sep-2640-resources-complete" : [ "SUCCESS" ],
+      "sep-2640-resources-digest-format" : [ "SUCCESS" ],
+      "sep-2640-resources-size-required" : [ "SUCCESS" ],
+      "sep-2640-resources-uri-within-skill" : [ "SUCCESS" ],
+      "sep-2640-skill-uri-scheme" : [ "SUCCESS" ],
+      "sep-2640-skillmd-frontmatter" : [ "SUCCESS" ],
+      "sep-2640-skillmd-required" : [ "SUCCESS" ],
+      "sep-2640-skills-get-cache-attributes" : [ "SUCCESS" ],
+      "sep-2640-skills-get-entry-shape" : [ "SUCCESS" ],
+      "sep-2640-skills-get-implemented" : [ "SUCCESS" ],
+      "sep-2640-skills-get-no-cursor" : [ "SUCCESS" ],
+      "sep-2640-skills-get-unknown-uri-invalid-params" : [ "SUCCESS" ],
+      "sep-2640-skills-list-cache-attributes" : [ "SUCCESS" ],
+      "sep-2640-skills-list-entry-atomic" : [ "SUCCESS" ],
+      "sep-2640-skills-list-implemented" : [ "SUCCESS" ],
+      "sep-2640-skills-list-pagination" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    },
+    "sep-2640-skills-manifest" : {
+      "sep-2640-final-segment-equals-name" : [ "SUCCESS" ],
+      "sep-2640-meta-prefix" : [ "SUCCESS" ],
+      "sep-2640-skillmd-metadata-description" : [ "SUCCESS" ],
+      "sep-2640-skillmd-metadata-name" : [ "SUCCESS" ],
+      "sep-2640-skillmd-mimetype" : [ "SUCCESS" ],
+      "wire-schema-valid" : [ "SUCCESS" ]
+    }
+  }
+}
