@@ -15,6 +15,7 @@
             [presa.example.hello-test]
             [presa.example.notebook-test]
             [presa.example.clojars-test]
+            [presa.example.nrepl-test]
             [presa.guides-test]
             [presa.input-test]
             [presa.jsonrpc-test]
@@ -61,6 +62,7 @@
     presa.example.hello-test
     presa.example.notebook-test
     presa.example.clojars-test
+    presa.example.nrepl-test
     presa.guides-test])
 
 (def jvm-namespaces

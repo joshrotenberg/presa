@@ -124,6 +124,7 @@ not pull in; pass `presa.schema.networknt/validator` as the server's
 | [Initialize-era clients](docs/guides/initialize-era.md) | serving 2025-11-25 and 2025-06-18, and what differs |
 | [Logging, progress and instrumentation](docs/guides/observability.md) | `log!`, `progress!`, `:on-event` |
 | [A complete example](docs/guides/example.md) | the notebook server, its REPL walkthrough and client, from a host |
+| [The nREPL bridge example](docs/guides/nrepl.md) | a running REPL behind MCP tools, as an example of a part: running it, how an evaluation behaves, its skills, security |
 
 Every Clojure block in the guides that is not marked no-run runs as part of
 the test suite, and so does the notebook's REPL walkthrough.
@@ -179,6 +180,19 @@ releases, with structured results.
 bb --config /path/to/presa/bb.edn -m presa.example.clojars   # or clojure -M:clojars
 claude mcp add clojars -- bb --config /path/to/presa/bb.edn -m presa.example.clojars
 codex mcp add clojars -- bb --config /path/to/presa/bb.edn -m presa.example.clojars
+```
+
+[`examples/presa/example/nrepl.clj`](examples/presa/example/nrepl.clj) puts a
+running Clojure or Babashka REPL behind MCP tools, over nREPL: evaluate code,
+load files, look symbols up. It shows a part with long calls: output as
+progress, cancellation, a timeout that leaves the code running, input asked
+of the client, and guides served as skills. [The guide](docs/guides/nrepl.md)
+covers it, including what the code it runs can do.
+
+```sh
+bb --config /path/to/presa/bb.edn -m presa.example.nrepl --dir /path/to/project
+claude mcp add repl -- bb --config /path/to/presa/bb.edn -m presa.example.nrepl --dir /path/to/project
+codex mcp add repl -- bb --config /path/to/presa/bb.edn -m presa.example.nrepl --dir /path/to/project
 ```
 
 ## Development
