@@ -22,6 +22,7 @@ bb conformance 2025-11-25                     # another lane
 bb conformance 2026-07-28 tools-list          # one scenario, no baseline check
 bb conformance 2026-07-28 --update-baseline   # record a new baseline
 bb conformance client 2026-07-28              # the client leg, against baselines/client-2026-07-28.json
+bb conformance skills                         # the Skills extension scenarios, against baselines/skills.json
 ```
 
 ## Baselines
@@ -35,9 +36,9 @@ that started passing. A baseline therefore changes only through
 
 ## CI
 
-`.github/workflows/conformance.yml` runs the three server lanes and the two
-client lanes on every pull request and push to main, each against its
-baseline, and keeps the runner's raw results as an artifact. `canary.yml`
+`.github/workflows/conformance.yml` runs the three server lanes, the two
+client lanes and the skills lane on every pull request and push to main,
+each against its baseline, and keeps the runner's raw results as an artifact. `canary.yml`
 runs the three server lanes and the two client lanes weekly against
 the runner's `alpha` dist-tag (`PRESA_CONFORMANCE_UNPINNED=1`) without
 gating anything, to show what a newer runner would change.
@@ -57,6 +58,22 @@ runner's `dist/index.js`).
 Totals over all 50 scenarios run: 196 SUCCESS, 0 FAILURE, 1 SKIPPED (the
 Tasks notification stub), 1 INFO (`server-sse-multiple-streams`: every
 response was JSON).
+
+### Skills extension lane
+
+`bb conformance skills` runs the runner's seven SEP-2640 scenarios, which no
+revision's set includes, at 2026-07-28: three against the fixture, which
+serves two skills, and four against the client harness, which lists the
+skills and, where the scenario is about verification, loads each as a host
+does.
+
+| Scenario | Result |
+|---|---|
+| `sep-2640-skills-enumeration` | 32 of 32 |
+| `sep-2640-skills-manifest` | 6 of 6 |
+| `sep-2640-skills-directory` | 7 of 7 |
+| `sep-2640-client-no-prefetch` | passes: listing reads no file |
+| `sep-2640-client-verify-digest`, `-size`, `-frontmatter` | pass: a SKILL.md that fails the check is refused and no further file is read |
 
 ### Initialize-era lanes
 

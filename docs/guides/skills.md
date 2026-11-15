@@ -176,8 +176,63 @@ A part may carry `:skills` (see [Parts](parts.md)). `presa.part/combine`
 treats a repeated skill URI as a duplicate, and a server built from parts
 declares the extension only when one of them has skills.
 
+## Changing a running server
+
+A server created with `:skills` (an empty vector will do) takes skills while
+it runs. `add-skill!` adds one, or replaces the skill at the same path;
+`remove-skill!` takes the URI of its `SKILL.md`. The skill's files come and
+go with it, and on a `:list-changed` server, clients listening for resource
+list changes are told.
+
+```clojure
+(def live (server/server {:name "team" :version "1" :skills [] :list-changed true}))
+(def lc (client/connect (client/in-process live)))
+
+(server/add-skill! live review)
+(map #(get % "uri") (client/list-skills lc))
+;; => ("skill://code-review/SKILL.md")
+
+(server/remove-skill! live (skill/uri review))
+(client/list-skills lc)
+;; => []
+
+(client/close lc)
+```
+
+A pagination cursor of `skills/list` or `resources/directory/read` from
+before a change has expired, as one of `resources/list` has.
+
+## Through a proxy
+
+`presa.proxy` serves the skills its backends list (see [Proxy](proxy.md)),
+under their own URIs:
+
+```clojure
+(require '[presa.proxy :as proxy])
+
+(def front (proxy/proxy-server
+            [{:prefix "team" :client (client/connect (client/in-process (server/server {:name "team" :version "1" :skills [review]})))}]
+            {:name "front" :version "1"}))
+(def fc (client/connect (client/in-process (:server front))))
+
+(map #(get % "uri") (client/list-skills fc))
+;; => ("skill://code-review/SKILL.md")
+
+(client/close fc)
+((:close! front))
+```
+
+- The proxy fetches each listed skill's files when it lists the backend, and
+  checks them against the backend's digests. A skill that fails the check,
+  or cannot be fetched, is left out with its files and logged to `:log`; the
+  rest of the backend is served. The proxy's entries carry the same digests.
+- A skill the backend lists as dynamic stays dynamic, and each read goes to
+  the backend.
+- A 2026-07-28 backend's resource list change fetches its skills again.
+- Two backends with a skill at the same path collide, as two tools of one
+  name do.
+
 ## What is not here
 
-- `presa.proxy` does not forward the skills methods.
-- Skills are fixed when the server is built; there is no adding or removing
-  one while it runs.
+- A proxy does not serve a skill its backend answers `skills/get` for
+  without listing it.

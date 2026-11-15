@@ -6,6 +6,7 @@
             [presa.protocol :as protocol]
             [presa.proxy :as proxy]
             [presa.server :as server]
+            [presa.skill :as skill]
             [presa.transport.http :as http]))
 
 (defn- backend-a []
@@ -250,3 +251,89 @@
       (try
         (is (some :stop (vals @(:listeners b))) "the backend has the proxy's subscription when proxy-server returns")
         (finally (close!))))))
+
+(defn- skill-md [name description]
+  (str "---\nname: " name "\ndescription: " description "\n---\n\n# " name "\n"))
+
+(deftest skills
+  (let [review (skill/skill "code-review" {"SKILL.md" (skill-md "code-review" "How to review")
+                                           "references/checklist.md" "# Checklist\n"})
+        clock (atom 0)
+        live (skill/skill "acme/status" {"SKILL.md" (skill-md "status" "The current status")
+                                         "now.txt" (fn [] (str "tick " (swap! clock inc)))})
+        a (server/server {:name "a" :version "1" :list-changed true :skills [review live]
+                          :resources [{:uri "a:/readme" :name "readme" :handler (fn [_] "A readme")}]})
+        {:keys [server close!]} (proxy/proxy-server [{:prefix "a" :client (connect a)}
+                                                     {:prefix "b" :client (connect (backend-b))}]
+                                                    {:name "front" :version "1"})
+        c (connect server)
+        uris #(mapv (fn [e] (get e "uri")) (client/list-skills c))]
+    (try
+      (testing "the proxy declares the extension and lists the backend's skills"
+        (is (client/skills? c))
+        (is (= ["skill://code-review/SKILL.md" "skill://acme/status/SKILL.md"] (uris))))
+      (testing "an entry is the backend's, and its files verify through the proxy"
+        (let [direct (connect a)]
+          (try (is (= (client/get-skill direct "skill://code-review/SKILL.md")
+                      (client/get-skill c "skill://code-review/SKILL.md")))
+               (finally (client/close direct))))
+        (let [{:keys [entry text]} (client/read-skill c "skill://code-review/SKILL.md")]
+          (is (clojure.string/includes? text "# code-review"))
+          (is (= "# Checklist\n" (client/read-skill-file c entry "skill://code-review/references/checklist.md")))))
+      (testing "directories are served"
+        (is (= ["SKILL.md" "references"] (map #(get % "name") (client/read-directory c "skill://code-review")))))
+      (testing "a skill's files are listed once, next to the backend's other resources"
+        (let [listed (map #(get % "uri") (client/list-resources c))]
+          (is (apply distinct? listed))
+          (is (some #{"a:/readme"} listed))
+          (is (some #{"skill://code-review/references/checklist.md"} listed))))
+      (testing "a dynamic skill stays dynamic and is read from the backend each time"
+        (let [entry (client/get-skill c "skill://acme/status/SKILL.md")
+              read #(client/read-skill-file c entry "skill://acme/status/now.txt")]
+          (is (= "dynamic" (get entry "resources")))
+          (is (not= (read) (read)))))
+      (testing "a skill the backend adds or removes follows"
+        (let [settles (fn [expected]
+                        (loop [n 0]
+                          (cond (= expected (uris)) true
+                                (> n 100) false
+                                :else (do (Thread/sleep 20) (recur (inc n))))))]
+          (server/add-skill! a (skill/skill "late" {"SKILL.md" (skill-md "late" "Added late")}))
+          (is (settles ["skill://code-review/SKILL.md" "skill://acme/status/SKILL.md" "skill://late/SKILL.md"]))
+          (server/remove-skill! a "skill://code-review/SKILL.md")
+          (is (settles ["skill://acme/status/SKILL.md" "skill://late/SKILL.md"]))
+          (is (not-any? #(clojure.string/starts-with? % "skill://code-review")
+                        (map #(get % "uri") (client/list-resources c))))))
+      (finally (client/close c) (close!))))
+  (testing "a proxy over backends without skills does not declare the extension"
+    (let [{:keys [server close!]} (proxy/proxy-server [{:prefix "b" :client (connect (backend-b))}] {:name "front" :version "1"})
+          c (connect server)]
+      (try (is (not (client/skills? c)))
+           (finally (client/close c) (close!)))))
+  (testing "a backend as a part carries its skills"
+    (let [backend (connect (server/server {:name "a" :version "1"
+                                           :skills [(skill/skill "late" {"SKILL.md" (skill-md "late" "Added late")})]}))]
+      (try (is (= ["skill://late/SKILL.md"] (map skill/uri (:skills (proxy/part {:prefix "a" :client backend})))))
+           (finally (client/close backend))))))
+
+(deftest a-skill-that-fails-its-check-is-left-out
+  (let [good (skill/skill "good" {"SKILL.md" (skill-md "good" "A good skill")})
+        bad (skill/skill "bad" {"SKILL.md" (skill-md "bad" "A bad skill") "notes.md" "as listed\n"})
+        backend (server/server {:name "a" :version "1" :skills [good bad]
+                                :tools [{:name "echo" :description "Echo" :handler (fn [{:strs [text]} _] text)}]})
+        ;; the content served no longer matches the digest listed
+        _ (server/add-resource! backend {:uri "skill://bad/notes.md" :name "notes.md" :handler (fn [_] "tampered\n")})
+        logged (atom [])
+        {:keys [server close!]} (proxy/proxy-server [{:prefix "a" :client (connect backend)}]
+                                                    {:name "front" :version "1"
+                                                     :log (fn [& parts] (swap! logged conj (apply str parts)))})
+        c (connect server)]
+    (try
+      (testing "the proxy starts, with the backend's other definitions"
+        (is (= ["skill://good/SKILL.md"] (map #(get % "uri") (client/list-skills c))))
+        (is (= "hi" (client/text (client/call-tool c "a_echo" {"text" "hi"})))))
+      (testing "the skill's files are not served, as a skill or as resources"
+        (is (not-any? #(clojure.string/starts-with? % "skill://bad") (map #(get % "uri") (client/list-resources c)))))
+      (testing "it is logged"
+        (is (some #(clojure.string/includes? % "skipped skill skill://bad/SKILL.md") @logged)))
+      (finally (client/close c) (close!)))))
