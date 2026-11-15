@@ -61,6 +61,9 @@ Each milestone lands as its own branch with tests under bb and the JVM.
 - [x] Basic JSON Schema validation of tool arguments and output (presa.schema)
 - [x] CI: tests on Babashka and the JVM, conventions, conformance lanes
       against baselines, a weekly canary
+- [x] The Skills extension (SEP-2640): serving skills, changing them on a
+      running server, the client's verified loading, the proxy, and a
+      conformance lane
 
 ## Backlog
 

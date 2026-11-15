@@ -12,8 +12,10 @@ on either (`:mvn/version`, or `:git/tag` with its `:git/sha`).
    `version.txt`, the version in `README.md`'s coordinate block (other docs
    show `0.1.0` as an example and are not updated), the version the client
    reports in `presa.client`, and the changelog in
-   `CHANGELOG.md`. Before 1.0, `feat` commits bump the minor version and
-   `fix` commits the patch version.
+   `CHANGELOG.md`. Before 1.0, `feat` and `fix` commits both bump the patch
+   version, and a breaking change bumps the minor version
+   (`bump-patch-for-minor-pre-major` and `bump-minor-pre-major` in
+   `release-please-config.json`).
 3. Merging that pull request tags `vX.Y.Z` on `main` and creates the GitHub
    release.
 4. The workflow's `clojars` job then checks out the tag, runs `bb test` and
