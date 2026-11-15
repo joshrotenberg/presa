@@ -13,7 +13,7 @@
 
 (def cached-methods
   #{"server/discover" "tools/list" "resources/list" "resources/templates/list"
-    "resources/read" "prompts/list" "skills/list"})
+    "resources/read" "prompts/list" "skills/list" "skills/get"})
 
 (def input-methods
   "The methods that may answer input_required."
@@ -66,7 +66,9 @@
 
 (def list-kinds
   {"tools/list" "tools" "resources/list" "resources"
-   "resources/templates/list" "resources" "prompts/list" "prompts"})
+   "resources/templates/list" "resources" "prompts/list" "prompts"
+   ;; skills change with the resources their files are
+   "skills/list" "resources" "resources/directory/read" "resources"})
 
 (defn encode-cursor [method offset version]
   (.encodeToString (.withoutPadding (Base64/getUrlEncoder))

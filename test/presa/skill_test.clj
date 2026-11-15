@@ -262,3 +262,49 @@
   (testing "parts without skills make a server without the extension"
     (part/with-client {:parts [{:tools [{:name "t" :handler (fn [_ _] "x")}]}]}
       (fn [c] (is (not (client/skills? c)))))))
+
+(deftest changing-a-running-server
+  (let [srv (server/server {:name "s" :version "1" :skills [review] :list-changed true :page-size 1})
+        c (client/connect (client/in-process srv))
+        uris #(mapv (fn [e] (get e "uri")) (client/list-skills c))
+        resource-uris #(set (map (fn [r] (get r "uri")) (client/list-resources c)))]
+    (try
+      (testing "a skill added while serving is listed, with its files as resources"
+        (server/add-skill! srv refunds)
+        (is (= ["skill://code-review/SKILL.md" "skill://acme/refunds/SKILL.md"] (uris)))
+        (is (contains? (resource-uris) "skill://acme/refunds/SKILL.md"))
+        (is (= "refunds" (get-in (client/read-skill c "skill://acme/refunds/SKILL.md") [:entry "frontmatter" "name"]))))
+      (testing "a skill at the same path is replaced in place, and files it no longer has are gone"
+        (let [before (resource-uris)
+              smaller (skill/skill "code-review" {"SKILL.md" (md "code-review" "Review, briefly")})]
+          (server/add-skill! srv smaller)
+          (is (= ["skill://code-review/SKILL.md" "skill://acme/refunds/SKILL.md"] (uris)))
+          (is (= "Review, briefly" (get-in (client/get-skill c "skill://code-review/SKILL.md") ["frontmatter" "description"])))
+          (is (= #{"skill://code-review/SKILL.md" "skill://acme/refunds/SKILL.md"}
+                 (set (filter #(str/starts-with? % "skill://") (resource-uris)))))
+          (is (< (count (resource-uris)) (count before)))))
+      (testing "a removed skill is gone with its files and directories"
+        (server/remove-skill! srv "skill://acme/refunds/SKILL.md")
+        (is (= ["skill://code-review/SKILL.md"] (uris)))
+        (is (not (contains? (resource-uris) "skill://acme/refunds/SKILL.md")))
+        (is (= -32602 (error-code #(client/get-skill c "skill://acme/refunds/SKILL.md"))))
+        (is (= -32602 (error-code #(client/read-directory c "skill://acme/refunds")))))
+      (testing "a cursor from before a change has expired"
+        (server/add-skill! srv refunds)
+        (let [cursor (get (client/request c "skills/list" {}) "nextCursor")]
+          (is (string? cursor))
+          (server/remove-skill! srv "skill://acme/refunds/SKILL.md")
+          (is (= -32602 (error-code #(client/request c "skills/list" {"cursor" cursor}))))))
+      (testing "listening clients hear a resource list change"
+        (let [heard (promise)
+              l (client/listen c {"resourcesListChanged" true} #(when (str/ends-with? (str (get % "method")) "/list_changed")
+                                                                  (deliver heard (get % "method"))))]
+          (try
+            (is (deref (:acknowledged l) 2000 nil))
+            (server/add-skill! srv refunds)
+            (is (= "notifications/resources/list_changed" (deref heard 2000 nil)))
+            (finally ((:stop! l))))))
+      (finally (client/close c))))
+  (testing "a server created without :skills does not take them"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"does not serve skills"
+                          (server/add-skill! (server/server {:name "s" :version "1"}) review)))))

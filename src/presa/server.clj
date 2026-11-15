@@ -17,6 +17,7 @@
             [presa.protocol :as protocol]
             [presa.request-state :as request-state]
             [presa.schema :as schema]
+            [presa.skill :as skill]
             [presa.tasks :as tasks]
             [presa.server.core :as core :refer [emit! json-text]]
             [presa.server.catalog :refer [drop-ordered index prompt-def put-ordered resource-def
@@ -228,6 +229,8 @@
                                :templates templates
                                :prompts prompts
                                :prompt-order prompt-order
+                               ;; the Skills extension; nil when it is off
+                               :skills skill-index
                                :catalog-version {"tools" 0 "resources" 0 "prompts" 0}})
                :page-size page-size
                :logging (boolean logging)
@@ -240,8 +243,6 @@
                :on-event on-event
                :expose-errors? (boolean expose-errors?)
                :task-store (when tasks-opts (tasks/store tasks-opts))
-               ;; the Skills extension; nil when it is off
-               :skills skill-index
                :required-scopes (or required-scopes {})
                :default-scopes (vec default-scopes)
      ;; open subscriptions/listen streams, by a key of their own
@@ -536,6 +537,41 @@
   [srv uri-template]
   (change! srv "resources"
            (fn [c] (update c :templates (fn [ts] (filterv #(not= uri-template (:uri-template %)) ts))))))
+
+(defn- change-skills!
+  "Replace the skills with (f skills), a vector in order: their files
+  replace the earlier skills' files among the resources."
+  [srv f]
+  (when-not (:skills @(:catalog srv))
+    (throw (ex-info "The server does not serve skills: create it with :skills, which may be []"
+                    {:kind :invalid-input})))
+  (change! srv "resources"
+           (fn [c]
+             (let [{:keys [by-uri order resources]} (:skills c)
+                   now (server-skills/index (f (mapv by-uri order)))
+                   without (reduce (fn [c uri] (drop-ordered c :resources :resource-order uri))
+                                   c (map :uri resources))]
+               (assoc (reduce (fn [c r] (put-ordered c :resources :resource-order (:uri r) (resource-def r)))
+                              without (:resources now))
+                      :skills now)))))
+
+(defn add-skill!
+  "Add skill (see presa.skill) to a running server created with :skills,
+  replacing the skill at the same path in place. Its files become
+  resources, and clients listening for resource list changes are told when
+  the server has :list-changed. Returns srv."
+  [srv skill]
+  (change-skills! srv (fn [skills]
+                        (let [uri (skill/uri skill)]
+                          (if (some #(= uri (skill/uri %)) skills)
+                            (mapv #(if (= uri (skill/uri %)) skill %) skills)
+                            (conj skills skill))))))
+
+(defn remove-skill!
+  "Remove the skill whose SKILL.md is at uri (presa.skill/uri) from a
+  running server, with its files. Returns srv."
+  [srv uri]
+  (change-skills! srv (fn [skills] (filterv #(not= uri (skill/uri %)) skills))))
 
 (defn add-prompt!
   "Add a prompt to a running server, replacing one of the same name.

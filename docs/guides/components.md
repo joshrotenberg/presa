@@ -194,8 +194,8 @@ snapshot of them; pagination cursors from before a change expire; and with
 ```
 
 `add-resource!`, `remove-resource!`, `add-resource-template!`,
-`remove-resource-template!`, `add-prompt!` and `remove-prompt!` work the same
-way.
+`remove-resource-template!`, `add-prompt!`, `remove-prompt!`, `add-skill!`
+and `remove-skill!` work the same way.
 
 ## Caching hints
 
