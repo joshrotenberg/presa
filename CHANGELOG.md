@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.8](https://github.com/joshrotenberg/presa/compare/v0.1.7...v0.1.8) (2026-11-15)
+
+
+### Features
+
+* **examples:** an nREPL bridge as an example part ([#157](https://github.com/joshrotenberg/presa/issues/157)) ([56d427d](https://github.com/joshrotenberg/presa/commit/56d427d65b28034dbf221c0266af9b8b4be1868f))
+* serve Agent Skills with the Skills extension (SEP-2640) ([#155](https://github.com/joshrotenberg/presa/issues/155)) ([084ef5f](https://github.com/joshrotenberg/presa/commit/084ef5f04ca9013d82957bbdbb3797f3e1d4f048))
+* **skill:** skills on a running server, through the proxy, and a conformance lane ([#159](https://github.com/joshrotenberg/presa/issues/159)) ([2483aef](https://github.com/joshrotenberg/presa/commit/2483aeff18f5980f5458b8aa6c4f06fa35467cbf))
+
 ## [0.1.7](https://github.com/joshrotenberg/presa/compare/v0.1.6...v0.1.7) (2026-11-13)
 
 
