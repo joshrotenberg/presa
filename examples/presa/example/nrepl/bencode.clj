@@ -1,4 +1,4 @@
-(ns presa.nrepl.bencode
+(ns presa.example.nrepl.bencode
   "Bencode, the wire format of nREPL: integers, byte strings, lists and
   dictionaries. Strings are written and read as UTF-8, which is what nREPL
   servers send; keywords are written as their names."

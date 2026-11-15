@@ -15,11 +15,11 @@
             [presa.example.hello-test]
             [presa.example.notebook-test]
             [presa.example.clojars-test]
+            [presa.example.nrepl-test]
             [presa.guides-test]
             [presa.input-test]
             [presa.jsonrpc-test]
             [presa.limits-test]
-            [presa.nrepl-test]
             [presa.part-test]
             [presa.protocol-test]
             [presa.proxy-test]
@@ -58,11 +58,11 @@
     presa.scopes-test
     presa.tasks-test
     presa.proxy-test
-    presa.nrepl-test
     presa.skill-test
     presa.example.hello-test
     presa.example.notebook-test
     presa.example.clojars-test
+    presa.example.nrepl-test
     presa.guides-test])
 
 (def jvm-namespaces

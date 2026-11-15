@@ -1,8 +1,8 @@
-(ns presa.nrepl.client
+(ns presa.example.nrepl.client
   "An nREPL client: bencoded maps over a socket. A request carries an op and
   an id; the server answers with any number of messages carrying that id,
   the last with \"done\" in its status. Messages are maps with string keys."
-  (:require [presa.nrepl.bencode :as bencode])
+  (:require [presa.example.nrepl.bencode :as bencode])
   (:import (java.io BufferedInputStream BufferedOutputStream InputStream OutputStream)
            (java.net InetSocketAddress Socket)
            (java.util.concurrent LinkedBlockingQueue TimeUnit)))

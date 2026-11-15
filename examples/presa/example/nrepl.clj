@@ -1,12 +1,12 @@
-(ns presa.nrepl
+(ns presa.example.nrepl
   "An nREPL server as a part (see presa.part): tools that evaluate code in a
   running REPL, load a file into it and look a symbol up.
 
-      (presa.part/serve! {:name \"repl\" :parts [(presa.nrepl/part {:port 7888})]})
+      (presa.part/serve! {:name \"repl\" :parts [(presa.example.nrepl/part {:port 7888})]})
 
   or, as a server of its own:
 
-      bb -m presa.nrepl --port 7888
+      bb -m presa.example.nrepl --port 7888
 
   How an evaluation maps onto MCP:
 
@@ -29,7 +29,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [presa.input :as input]
-            [presa.nrepl.client :as nrepl]
+            [presa.example.nrepl.client :as nrepl]
             [presa.part :as part]
             [presa.server :as server]
             [presa.skill :as skill]))
@@ -515,12 +515,12 @@
 ;; Skills: guides served with the Skills extension (presa.skill)
 
 (def skill-names
-  "The skills the part serves, each a SKILL.md under presa/nrepl/skills/ on
+  "The skills the part serves, each a SKILL.md under presa/example/nrepl/skills/ on
   the classpath."
   ["repl-workflow" "repl-long-running" "repl-exploring" "repl-debugging" "repl-testing" "babashka-tooling"])
 
 (defn- skills []
-  (mapv #(skill/from-classpath (str "presa/nrepl/skills/" %)) skill-names))
+  (mapv #(skill/from-classpath (str "presa/example/nrepl/skills/" %)) skill-names))
 
 (defn- skill-instructions [skills]
   (str "Guides for working this way are skills of this server. Read the one that fits before a task of "

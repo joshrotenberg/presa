@@ -1,13 +1,30 @@
-# The nREPL bridge
+# The nREPL bridge example
 
-`presa.nrepl` puts a running Clojure or Babashka REPL behind MCP tools. An
-agent evaluates code in the live process, loads files into it and looks
-symbols up, over [nREPL](https://nrepl.org), the protocol editors use. State
-persists between calls, so the agent works the way a person does at a REPL:
-evaluate a little, look at the result, change the code, load it again.
+[`examples/presa/example/nrepl.clj`](../../examples/presa/example/nrepl.clj)
+(`presa.example.nrepl`) puts a running Clojure or Babashka REPL behind MCP
+tools. An agent evaluates code in the live process, loads files into it and
+looks symbols up, over [nREPL](https://nrepl.org), the protocol editors use.
+State persists between calls.
 
-It is a part (see [Parts](parts.md)), so it runs as a server of its own or
-next to a project's other tools.
+It is an example, not part of the library: the jar does not contain it, and
+it runs from a checkout of this repository. It is a part (see
+[Parts](parts.md)), and shows what a part with long-running calls involves:
+output as progress, cancellation, a timeout that leaves work running, input
+asked of the client, and guides served as skills.
+
+## When it helps
+
+A REPL earns its place when state lives in a running process and is slow or
+impossible to rebuild: an application with a long startup, a live service,
+data loaded once, an open connection. In trials with Claude Code on tasks
+without such state, it did not help:
+
+- Building a Babashka script took as long and cost as much through the REPL
+  as with shell and file tools. Babashka starts in milliseconds, so running
+  the script from a shell is already a short loop.
+- Fixing seeded defects in this repository, where the JVM test suite takes
+  about 35 seconds, the model had both a shell and a connected JVM REPL and
+  used only the shell, in both runs.
 
 ## Security
 
@@ -30,7 +47,7 @@ the network.
 Start an nREPL server in the project, then serve the bridge over stdio:
 
 ```sh
-bb --config /path/to/presa/bb.edn -m presa.nrepl --dir /path/to/project
+bb --config /path/to/presa/bb.edn -m presa.example.nrepl --dir /path/to/project
 ```
 
 - `--dir` is the project directory. The port is read from its `.nrepl-port`
@@ -44,8 +61,8 @@ A JVM REPL started with `nrepl.cmdline` or by an editor, and
 Register it with a host as any stdio server:
 
 ```sh
-claude mcp add repl -- bb --config /path/to/presa/bb.edn -m presa.nrepl --dir /path/to/project
-codex mcp add repl -- bb --config /path/to/presa/bb.edn -m presa.nrepl --dir /path/to/project
+claude mcp add repl -- bb --config /path/to/presa/bb.edn -m presa.example.nrepl --dir /path/to/project
+codex mcp add repl -- bb --config /path/to/presa/bb.edn -m presa.example.nrepl --dir /path/to/project
 ```
 
 The bridge connects on the first call, not at startup, so it can be
@@ -64,7 +81,7 @@ a tool error that says so.
 | `guide` | reads one of the part's guides (see Skills below) |
 
 ```clojure
-(require '[presa.nrepl :as nrepl])
+(require '[presa.example.nrepl :as nrepl])
 
 ;; a part connects on its first call, so building one needs no REPL
 (map :name (:tools (nrepl/part {:port 7888})))
@@ -144,7 +161,8 @@ the lines of the instructions that list them.
 
 ## As a part
 
-`part` returns a part, to combine with a project's own tools:
+`part` returns a part, to combine with a project's own tools. The examples
+directory has to be on the classpath:
 
 <!-- no-run -->
 ```clojure

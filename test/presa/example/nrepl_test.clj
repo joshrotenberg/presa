@@ -1,10 +1,10 @@
-(ns presa.nrepl-test
+(ns presa.example.nrepl-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [presa.client :as client]
-            [presa.nrepl :as nrepl]
-            [presa.nrepl.bencode :as bencode]
+            [presa.example.nrepl :as nrepl]
+            [presa.example.nrepl.bencode :as bencode]
             [presa.part :as part]
             [presa.skill :as skill])
   (:import (java.io ByteArrayInputStream)
