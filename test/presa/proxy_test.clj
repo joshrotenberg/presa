@@ -315,3 +315,25 @@
                                            :skills [(skill/skill "late" {"SKILL.md" (skill-md "late" "Added late")})]}))]
       (try (is (= ["skill://late/SKILL.md"] (map skill/uri (:skills (proxy/part {:prefix "a" :client backend})))))
            (finally (client/close backend))))))
+
+(deftest a-skill-that-fails-its-check-is-left-out
+  (let [good (skill/skill "good" {"SKILL.md" (skill-md "good" "A good skill")})
+        bad (skill/skill "bad" {"SKILL.md" (skill-md "bad" "A bad skill") "notes.md" "as listed\n"})
+        backend (server/server {:name "a" :version "1" :skills [good bad]
+                                :tools [{:name "echo" :description "Echo" :handler (fn [{:strs [text]} _] text)}]})
+        ;; the content served no longer matches the digest listed
+        _ (server/add-resource! backend {:uri "skill://bad/notes.md" :name "notes.md" :handler (fn [_] "tampered\n")})
+        logged (atom [])
+        {:keys [server close!]} (proxy/proxy-server [{:prefix "a" :client (connect backend)}]
+                                                    {:name "front" :version "1"
+                                                     :log (fn [& parts] (swap! logged conj (apply str parts)))})
+        c (connect server)]
+    (try
+      (testing "the proxy starts, with the backend's other definitions"
+        (is (= ["skill://good/SKILL.md"] (map #(get % "uri") (client/list-skills c))))
+        (is (= "hi" (client/text (client/call-tool c "a_echo" {"text" "hi"})))))
+      (testing "the skill's files are not served, as a skill or as resources"
+        (is (not-any? #(clojure.string/starts-with? % "skill://bad") (map #(get % "uri") (client/list-resources c)))))
+      (testing "it is logged"
+        (is (some #(clojure.string/includes? % "skipped skill skill://bad/SKILL.md") @logged)))
+      (finally (client/close c) (close!)))))

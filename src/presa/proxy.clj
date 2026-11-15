@@ -34,8 +34,9 @@
   and resources/directory/read. Their files are fetched and checked against
   the backend's digests when the backend is listed, and again when its
   resource list changes; a skill the backend lists as dynamic is read from
-  the backend on each read. A skill the backend serves without listing it
-  is not proxied."
+  the backend on each read. A skill that cannot be fetched or fails its
+  check is left out, with its files, and logged. A skill the backend serves
+  without listing it is not proxied."
   (:require [presa.client :as client]
             [presa.server :as server]
             [presa.skill :as skill])
@@ -263,27 +264,43 @@
         (.decode (Base64/getDecoder) ^String (get content "blob"))
         (get content "text")))))
 
+(defn- stderr-log [& parts] (binding [*out* *err*] (println (apply str parts))))
+
 (defn- skill-defs
-  "The skills c lists, as presa.skill skills. A skill with digests is copied,
-  each file checked against its digest; a dynamic one reads the backend on
-  each read, its files found through resources/directory/read when the
-  backend serves that, else only its SKILL.md."
-  [c]
-  (for [{:strs [uri frontmatter resources] :as entry} (client/list-skills c)
-        :let [path (second (re-matches #"skill://(.+)/SKILL\.md" (str uri)))]
-        :when path
-        :let [root (str "skill://" path)
-              file-of #(subs % (inc (count root)))]]
-    (skill/skill path
-                 (if (= "dynamic" resources)
-                   (into {} (map (fn [file-uri] [(file-of file-uri) (backend-read c file-uri)]))
-                         (if (get-in (:server-capabilities (client/info c)) ["extensions" skill/extension "directoryRead"])
-                           (directory-files c root)
-                           [uri]))
-                   (into {} (map (fn [{file-uri "uri"}]
-                                   [(file-of file-uri) (client/read-skill-file c entry file-uri)]))
-                         resources))
-                 {:frontmatter frontmatter})))
+  "The skills c lists: {:skills presa.skill skills, :withheld the file URIs
+  of the listed skills that are not served}. A skill with digests is
+  copied, each file checked against its digest; a dynamic one reads the
+  backend on each read, its files found through resources/directory/read
+  when the backend serves that, else only its SKILL.md. A skill that cannot
+  be fetched or fails its check is left out and logged, and its files are
+  withheld from the backend's resources as well."
+  [c log]
+  (reduce
+   (fn [acc {:strs [uri frontmatter resources] :as entry}]
+     (let [path (second (re-matches #"skill://(.+)/SKILL\.md" (str uri)))
+           root (str "skill://" path)
+           file-of #(subs % (inc (count root)))]
+       (try
+         (when-not path
+           (throw (ex-info "its URI is not skill://<path>/SKILL.md" {})))
+         (update acc :skills conj
+                 (skill/skill path
+                              (if (= "dynamic" resources)
+                                (into {} (map (fn [file-uri] [(file-of file-uri) (backend-read c file-uri)]))
+                                      (if (get-in (:server-capabilities (client/info c))
+                                                  ["extensions" skill/extension "directoryRead"])
+                                        (directory-files c root)
+                                        [uri]))
+                                (into {} (map (fn [{file-uri "uri"}]
+                                                [(file-of file-uri) (client/read-skill-file c entry file-uri)]))
+                                      resources))
+                              {:frontmatter frontmatter}))
+         (catch Exception e
+           (log "proxy: skipped skill " uri ": " (or (ex-message e) (class e)))
+           (update acc :withheld into
+                   (cons uri (when (sequential? resources) (keep #(get % "uri") resources))))))))
+   {:skills [] :withheld #{}}
+   (client/list-skills c)))
 
 (defn- resource-defs
   "The resources c lists, apart from those at skipped URIs."
@@ -307,10 +324,11 @@
 
 (defn- catalog
   "The definitions a backend contributes."
-  [{:keys [prefix client separator] ::keys [parked] :or {separator "_"}}]
-  (let [skills (if (client/skills? client) (vec (skill-defs client)) [])
-        ;; a skill's files are served with the skill, not as resources of their own
-        skill-files (set (map :uri (mapcat skill/resources skills)))]
+  [{:keys [prefix client separator] ::keys [parked log] :or {separator "_" log stderr-log}}]
+  (let [{:keys [skills withheld]} (if (client/skills? client) (skill-defs client log) {:skills [] :withheld #{}})
+        ;; a skill's files are served with the skill, not as resources of
+        ;; their own, and those of a skill left out are not served at all
+        skill-files (into withheld (map :uri (mapcat skill/resources skills)))]
     {:tools (if (has? client "tools") (vec (tool-defs prefix separator client parked)) [])
      :prompts (if (has? client "prompts") (vec (prompt-defs prefix separator client parked)) [])
      :resources (if (has? client "resources") (vec (resource-defs client parked skill-files)) [])
@@ -323,9 +341,12 @@
   resource templates and skills, each call forwarded as proxy-server forwards it (input,
   progress, logs, cancellation; see the namespace doc). The definitions are
   listed once: a part does not follow the backend's list changes, which
-  proxy-server does. The caller closes the client."
+  proxy-server does. `:log` on the backend map is (fn [& parts]) for a skill
+  that is left out (default: a line on stderr). The caller closes the
+  client."
   [backend]
-  (let [{:keys [tools prompts resources templates skills]} (catalog (assoc backend ::parked (atom {})))]
+  (let [{:keys [tools prompts resources templates skills]} (catalog (cond-> (assoc backend ::parked (atom {}))
+                                                                      (:log backend) (assoc ::log (:log backend))))]
     {:tools tools :prompts prompts :resources resources :resource-templates templates :skills skills}))
 
 (defn- check-unique! [kind ks]
@@ -376,14 +397,15 @@
   Prefixed tool and prompt names, resource URIs, template URIs and skill
   paths must not collide across backends. When a backend's list changes, its definitions
   are fetched again, one fetch at a time per backend; one whose name
-  another backend already has is skipped and logged. :log in opts is
-  (fn [& parts]) for that and for failed fetches (default: a line on
+  another backend already has is skipped and logged, and so is a skill
+  that fails its check. :log in opts is (fn [& parts]) for that and for
+  failed fetches (default: a line on
   stderr)."
   [backends opts]
-  (let [log (or (:log opts) (fn [& parts] (binding [*out* *err*] (println (apply str parts)))))
+  (let [log (or (:log opts) stderr-log)
         opts (dissoc opts :log)
         parked (atom {})
-        backends (vec (map-indexed (fn [i b] (assoc b ::index i ::parked parked)) backends))
+        backends (vec (map-indexed (fn [i b] (assoc b ::index i ::parked parked ::log log)) backends))
         catalogs (atom (into {} (map (fn [b] [(::index b) (catalog b)])) backends))
         all (fn [k] (mapcat k (vals @catalogs)))]
     (check-unique! :tools (map :name (all :tools)))

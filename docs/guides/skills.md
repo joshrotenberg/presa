@@ -223,8 +223,9 @@ under their own URIs:
 ```
 
 - The proxy fetches each listed skill's files when it lists the backend, and
-  checks them against the backend's digests; a skill that fails the check
-  stops the listing. Its own entries carry the same digests.
+  checks them against the backend's digests. A skill that fails the check,
+  or cannot be fetched, is left out with its files and logged to `:log`; the
+  rest of the backend is served. The proxy's entries carry the same digests.
 - A skill the backend lists as dynamic stays dynamic, and each read goes to
   the backend.
 - A 2026-07-28 backend's resource list change fetches its skills again.
